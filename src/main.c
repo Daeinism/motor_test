@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
@@ -20,18 +22,21 @@ static void gpioInit(void);
 static void motorPwmInit(void);
 static void ledTask(void *arg);
 static void motorTask(void *arg);
+static void userInputTask(void *arg);
+
+static volatile int motorDuty = 0; 
+// static = makes the variable private for the lifetime of the program
+// volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
 
 /*|Main|---------------------------------------------------------------------*/
 void app_main(void)
 {
     gpioInit();
-
     motorPwmInit();
 
     xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
-
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
-    
+    xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
 }
 
 
@@ -50,8 +55,8 @@ static void gpioInit(void)
     gpio_set_level(MOTOR1_IN2, 0);
     gpio_set_level(MOTOR2_IN2, 0);
 }
-
-static void motorPwmInit(void) {
+static void motorPwmInit(void) 
+{
 
     ledc_timer_config_t timer = { //configuration setting (won't need timer for anything else)
         .speed_mode = LEDC_LOW_SPEED_MODE, //default for ESP32 S3 Hardware (no need change) 
@@ -83,7 +88,6 @@ static void motorPwmInit(void) {
     ledc_channel_config(&channel1);
     ledc_channel_config(&channel2);
 }
-
 static void ledTask(void *arg)
 {
     while (1) 
@@ -95,26 +99,48 @@ static void ledTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
 static void motorTask(void *arg)
 {
     (void)arg; // telling compiler "Yes, we are not using the arguments. Stop asking."
 
     while (1) {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 400);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, motorDuty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 512);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, motorDuty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+static void userInputTask(void *arg)
+{
+    (void)arg;
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+    char inputBuffer[32];
+    int inputDuty;
 
-        vTaskDelay(pdMS_TO_TICKS(3000));
+    printf("Enter duty from 0 to 1023:\n");
+
+    while (1) {
+        if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        inputDuty = strtol(inputBuffer, NULL, 10); //strtol = string to long integer
+
+        if (inputDuty < 0) {
+            inputDuty = 0;
+        }
+
+        if (inputDuty > 1023) {
+            inputDuty = 1023;
+        }
+
+        motorDuty = inputDuty;
+
+        printf("Duty set to %d\n", motorDuty);
     }
 }
