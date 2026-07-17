@@ -202,23 +202,35 @@ static void userInputTask(void *arg)
 }
 static void limitSwitchTask(void *arg)
 {
+    // 0. setting up the gpio configuation
     gpio_config_t switchConfig = {
-        .pin_bit_mask = (1ULL << LIMIT_SWITCH_GPIO),
+        .pin_bit_mask = (1ULL << LIMIT_SWITCH_GPIO), 
+            // << means, moving that 1(ON) sign to the left multiple times (# of gpio number)
+            // bit mask is used because same config can also be applied to multiple gpio if wanted
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
+        .intr_type = GPIO_INTR_DISABLE // setting interrupt function OFF
     };
 
-    gpio_config(&switchConfig);
+    gpio_config(&switchConfig); // applying the above gpio configuration
+
+    // 1. Detecting the change in limit switch state
+    int previousState = gpio_get_level(LIMIT_SWITCH_GPIO); //get_level to get the value
 
     while (1) {
-        if (gpio_get_level(LIMIT_SWITCH_GPIO) == 0) {
-            printf("Limit switch PRESSED\n");
-        } else {
-            printf("Limit switch RELEASED\n");
+        int currentState = gpio_get_level(LIMIT_SWITCH_GPIO);
+
+        if (currentState != previousState) {
+            if (currentState == 0) {
+                printf("Limit switch PRESSED\n");
+            } else {
+                printf("Limit switch RELEASED\n");
+            }
+
+            previousState = currentState;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
