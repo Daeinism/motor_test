@@ -22,6 +22,7 @@
 #define MOTOR2_IN2 GPIO_NUM_10
 
 #define MOTOR_MAX_DUTY 1023
+#define ENCODER_COUNTS_PER_REVOLUTION 330
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -39,13 +40,32 @@ static volatile int32_t encoderCount = 0;
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
 
 /*|Newly Added|---------------------------------------------------------------*/
-static void IRAM_ATTR encoderISR(void *arg)
+static void encoderInit(void)
 {
-    if (gpio_get_level(ENCODER_B_GPIO) == 0) {
-        encoderCount++;
-    } else {
-        encoderCount--;
-    }
+    // 0. Setting up the GPIO pin config for encoder wires
+    gpio_config_t encoderConfig = {
+        .pin_bit_mask =
+            (1ULL << ENCODER_A_GPIO) |
+            (1ULL << ENCODER_B_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&encoderConfig); //apply the above setup
+
+    // 1. Setting the interruption condition. Options:
+        // POSEDGE: LOW → HIGH     
+        // NEGEDGE: HIGH → LOW    
+        // ANYEDGE: ANY
+        // LOW_LEVEL: while LOW
+        // HIGH_LEVEL: while HIGH
+    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_POSEDGE); // LOW → HIGH
+    
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
 }
 static void encoderTask(void *arg)
 {
@@ -62,24 +82,22 @@ static void encoderTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
-static void encoderInit(void)
-{
-    gpio_config_t encoderConfig = {
-        .pin_bit_mask =
-            (1ULL << ENCODER_A_GPIO) |
-            (1ULL << ENCODER_B_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
+static void IRAM_ATTR encoderISR(void *arg)
+{ 
+    // IRAM_ATTR: "Put this function inside the IRAM"
+    // ISR: "Interrupt Service Routine"
 
-    gpio_config(&encoderConfig);
-
-    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_POSEDGE);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
+    /* |What's Going on|-----------------------------------------------
+    Determining the direction of the movement by reading the B value
+    'encoderISR' runs every time Encoder A changes from 0 -> 1.
+    When A goes from 0 to 1, B = 0 means the count-increasing direction.
+    When A goes from 0 to 1, B = 1 means the count-decreasing direction.
+    ------------------------------------------------------------------*/
+    if (gpio_get_level(ENCODER_B_GPIO) == 0) {
+        encoderCount++;
+    } else {
+        encoderCount--;
+    }
 }
 
 /*|Main|---------------------------------------------------------------------*/
@@ -273,6 +291,7 @@ static void limitSwitchTask(void *arg)
 
         if (currentState != previousState) {
             if (currentState == 0) {
+                encoderCount = 0; // Set the current limit-switch position as encoder zero
                 printf("Limit switch PRESSED\n");
             } else {
                 printf("Limit switch RELEASED\n");
