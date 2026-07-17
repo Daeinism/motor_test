@@ -15,6 +15,7 @@
 #define MOTOR1_IN2 GPIO_NUM_12
 #define MOTOR2_IN1 GPIO_NUM_9
 #define MOTOR2_IN2 GPIO_NUM_10
+#define MOTOR_MAX_DUTY 1023
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -23,6 +24,7 @@ static void motorPwmInit(void);
 static void ledTask(void *arg);
 static void motorTask(void *arg);
 static void userInputTask(void *arg);
+static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
 
 static volatile int motorDuty = 0; 
 // static = makes the variable private for the lifetime of the program
@@ -39,21 +41,12 @@ void app_main(void)
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
 }
 
-
 /*|Function Definition|------------------------------------------------------*/
 static void gpioInit(void)
 {
     gpio_reset_pin(TEST_LED_GPIO);
     gpio_set_direction(TEST_LED_GPIO, GPIO_MODE_OUTPUT);
-
-    gpio_reset_pin(MOTOR1_IN2);
-    gpio_set_direction(MOTOR1_IN2, GPIO_MODE_OUTPUT);
-    gpio_reset_pin(MOTOR2_IN2);
-    gpio_set_direction(MOTOR2_IN2, GPIO_MODE_OUTPUT);
-
-    /* Keep the motor stopped during initialization */
-    gpio_set_level(MOTOR1_IN2, 0);
-    gpio_set_level(MOTOR2_IN2, 0);
+    gpio_set_level(TEST_LED_GPIO, 0);
 }
 static void motorPwmInit(void) 
 {
@@ -68,25 +61,44 @@ static void motorPwmInit(void)
 
     ledc_timer_config(&timer); // pass the data to the function that programs the hardware
 
-    ledc_channel_config_t channel1 = {
-        .gpio_num = MOTOR1_IN1,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0, // 1 0f 8 available channels
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0, // proportion of how long it is HIGH vs LOW per cycle (400/1024)
-        .hpoint = 0 // leave it (advanced setting)
-    };
-    ledc_channel_config_t channel2 = {
-        .gpio_num = MOTOR2_IN1,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_1, // No.2 of 8 available channels
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0
+    ledc_channel_config_t channels[] = {
+        {
+            .gpio_num = MOTOR1_IN1,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LEDC_CHANNEL_0,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = MOTOR1_IN2,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LEDC_CHANNEL_1,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = MOTOR2_IN1,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LEDC_CHANNEL_2,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = MOTOR2_IN2,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LEDC_CHANNEL_3,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0
+        }
     };
 
-    ledc_channel_config(&channel1);
-    ledc_channel_config(&channel2);
+    for (int i = 0; i < 4; i++) {
+        ledc_channel_config(&channels[i]); //applying the above configuration for all 4 channels
+    }
 }
 static void ledTask(void *arg)
 {
@@ -103,15 +115,48 @@ static void motorTask(void *arg)
 {
     (void)arg; // telling compiler "Yes, we are not using the arguments. Stop asking."
 
-    while (1) {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, motorDuty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    int previousDuty = 1;
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, motorDuty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+    while (1) {
+        int requestedDuty = motorDuty;
+
+        if (requestedDuty != previousDuty) {
+            /* Stop briefly before changing speed or direction. */
+            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
+            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
+            vTaskDelay(pdMS_TO_TICKS(10));
+
+            /* And then start moving again with new duty*/
+            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, requestedDuty);
+            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, requestedDuty);
+            previousDuty = requestedDuty;
+        }
 
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+}
+
+static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty)
+{
+    uint32_t in1Duty = 0;
+    uint32_t in2Duty = 0;
+
+    if (signedDuty > MOTOR_MAX_DUTY) {
+        signedDuty = MOTOR_MAX_DUTY;
+    } else if (signedDuty < -MOTOR_MAX_DUTY) {
+        signedDuty = -MOTOR_MAX_DUTY;
+    }
+
+    if (signedDuty > 0) {
+        in1Duty = (uint32_t)signedDuty;
+    } else if (signedDuty < 0) {
+        in2Duty = (uint32_t)(-signedDuty);
+    }
+
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, in1Channel, in1Duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, in1Channel);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, in2Channel, in2Duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, in2Channel);
 }
 
 static void userInputTask(void *arg)
@@ -121,7 +166,8 @@ static void userInputTask(void *arg)
     char inputBuffer[32];
     int inputDuty;
 
-    printf("Enter duty from 0 to 1023:\n");
+    printf("Enter duty from -1023 to 1023:\n");
+    printf("Positive = forward, negative = reverse, 0 = stop\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
@@ -131,16 +177,17 @@ static void userInputTask(void *arg)
 
         inputDuty = strtol(inputBuffer, NULL, 10); //strtol = string to long integer
 
-        if (inputDuty < 0) {
-            inputDuty = 0;
-        }
-
-        if (inputDuty > 1023) {
-            inputDuty = 1023;
+        if (inputDuty > MOTOR_MAX_DUTY) {
+            inputDuty = MOTOR_MAX_DUTY;
+        } else if (inputDuty < -MOTOR_MAX_DUTY) {
+            inputDuty = -MOTOR_MAX_DUTY;
         }
 
         motorDuty = inputDuty;
 
-        printf("Duty set to %d\n", motorDuty);
+        printf("Motor duty set to %d (%s)\n",
+               motorDuty,
+               motorDuty > 0 ? "forward" :
+               motorDuty < 0 ? "reverse" : "stop");
     }
 }
