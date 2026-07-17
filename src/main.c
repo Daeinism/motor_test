@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h> // For: Encoder
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
@@ -12,6 +13,8 @@
 /*|Macro|--------------------------------------------------------------------*/
 #define TEST_LED_GPIO GPIO_NUM_36
 #define LIMIT_SWITCH_GPIO GPIO_NUM_42
+#define ENCODER_A_GPIO GPIO_NUM_17
+#define ENCODER_B_GPIO GPIO_NUM_18
 
 #define MOTOR1_IN1 GPIO_NUM_11
 #define MOTOR1_IN2 GPIO_NUM_12
@@ -31,19 +34,66 @@ static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, i
 static void limitSwitchTask(void *arg);
 
 static volatile int motorDuty = 0; 
+static volatile int32_t encoderCount = 0;
 // static = makes the variable private for the lifetime of the program
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
+
+/*|Newly Added|---------------------------------------------------------------*/
+static void IRAM_ATTR encoderISR(void *arg)
+{
+    if (gpio_get_level(ENCODER_B_GPIO) == 0) {
+        encoderCount++;
+    } else {
+        encoderCount--;
+    }
+}
+static void encoderTask(void *arg)
+{
+    int32_t previousCount = encoderCount;
+
+    while (1) {
+        int32_t currentCount = encoderCount;
+
+        if (currentCount != previousCount) {
+            printf("Encoder count: %ld\n", (long)currentCount);
+            previousCount = currentCount;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+static void encoderInit(void)
+{
+    gpio_config_t encoderConfig = {
+        .pin_bit_mask =
+            (1ULL << ENCODER_A_GPIO) |
+            (1ULL << ENCODER_B_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&encoderConfig);
+
+    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_POSEDGE);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
+}
 
 /*|Main|---------------------------------------------------------------------*/
 void app_main(void)
 {
     gpioInit();
     motorPwmInit();
+    encoderInit();
 
     xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
     xTaskCreate(limitSwitchTask, "limitSwitchTask", 2048, NULL, 5, NULL);
+    xTaskCreate(encoderTask, "encoderTask", 2048, NULL, 1, NULL);
 }
 
 /*|Function Definition|------------------------------------------------------*/
