@@ -40,49 +40,7 @@ static volatile int32_t encoderCount = 0;
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
 
 /*|Newly Added|---------------------------------------------------------------*/
-static void encoderInit(void)
-{
-    // 0. Setting up the GPIO pin config for encoder wires
-    gpio_config_t encoderConfig = {
-        .pin_bit_mask =
-            (1ULL << ENCODER_A_GPIO) |
-            (1ULL << ENCODER_B_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-
-    gpio_config(&encoderConfig); //apply the above setup
-
-    // 1. Setting the interruption condition. Options:
-        // POSEDGE: LOW → HIGH     
-        // NEGEDGE: HIGH → LOW    
-        // ANYEDGE: ANY
-        // LOW_LEVEL: while LOW
-        // HIGH_LEVEL: while HIGH
-    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_POSEDGE); // LOW → HIGH
-    
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
-}
-static void encoderTask(void *arg)
-{
-    int32_t previousCount = encoderCount;
-
-    while (1) {
-        int32_t currentCount = encoderCount;
-
-        if (currentCount != previousCount) {
-            printf("Encoder count: %ld\n", (long)currentCount);
-            previousCount = currentCount;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}
-static void IRAM_ATTR encoderISR(void *arg)
+static void IRAM_ATTR encoderISR(void *arg) // Determine direction & Update encoder value
 { 
     // IRAM_ATTR: "Put this function inside the IRAM"
     // ISR: "Interrupt Service Routine"
@@ -97,6 +55,52 @@ static void IRAM_ATTR encoderISR(void *arg)
         encoderCount++;
     } else {
         encoderCount--;
+    }
+}
+static void encoderInit(void) // Create encoder interrupt service
+{
+    // 0. Setting up the GPIO pin config for encoder wires
+    gpio_config_t encoderConfig = {
+        .pin_bit_mask =
+            (1ULL << ENCODER_A_GPIO) |
+            (1ULL << ENCODER_B_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&encoderConfig); //apply the above setup
+
+    /* 1. Setting the interruption condition. Options:
+        POSEDGE: LOW → HIGH     
+        NEGEDGE: HIGH → LOW    
+        ANYEDGE: ANY
+        LOW_LEVEL: while LOW
+        HIGH_LEVEL: while HIGH                        */
+    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_POSEDGE); // LOW → HIGH
+    
+    /* 2. Installing a service that can handle above gpio interrupt
+        - installing just once is sufficient for the entire program (ESP32 firmware)
+        - the public ISR service is now saved in GPIO driver internally */  
+    gpio_install_isr_service(0); // 0 = default setting
+
+    // 3. Registering encoderISR to selected GPIO pin
+    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
+}
+static void encoderTask(void *arg) // Prints encoder value
+{
+    int32_t previousCount = encoderCount;
+
+    while (1) {
+        int32_t currentCount = encoderCount;
+
+        if (currentCount != previousCount) {
+            printf("Encoder count: %ld\n", (long)currentCount);
+            previousCount = currentCount;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
