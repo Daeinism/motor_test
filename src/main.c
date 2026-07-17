@@ -11,10 +11,13 @@
 
 /*|Macro|--------------------------------------------------------------------*/
 #define TEST_LED_GPIO GPIO_NUM_36
+#define LIMIT_SWITCH_GPIO GPIO_NUM_42
+
 #define MOTOR1_IN1 GPIO_NUM_11
 #define MOTOR1_IN2 GPIO_NUM_12
 #define MOTOR2_IN1 GPIO_NUM_9
 #define MOTOR2_IN2 GPIO_NUM_10
+
 #define MOTOR_MAX_DUTY 1023
 
 
@@ -25,6 +28,7 @@ static void ledTask(void *arg);
 static void motorTask(void *arg);
 static void userInputTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
+static void limitSwitchTask(void *arg);
 
 static volatile int motorDuty = 0; 
 // static = makes the variable private for the lifetime of the program
@@ -39,6 +43,7 @@ void app_main(void)
     xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
+    xTaskCreate(limitSwitchTask, "limitSwitchTask", 2048, NULL, 5, NULL);
 }
 
 /*|Function Definition|------------------------------------------------------*/
@@ -118,7 +123,7 @@ static void motorTask(void *arg)
     int previousDuty = 1;
 
     while (1) {
-        int requestedDuty = motorDuty;
+        int requestedDuty = motorDuty; // making a snap shot of motorDuty to prevent potential error
 
         if (requestedDuty != previousDuty) {
             /* Stop briefly before changing speed or direction. */
@@ -135,33 +140,35 @@ static void motorTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
-
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty)
 {
-    uint32_t in1Duty = 0;
+    // 0. Declaring duty values (initially 0)
+    uint32_t in1Duty = 0; //unsigned int 32bit type (required by LEDC)
     uint32_t in2Duty = 0;
 
+    // 1. Capping to max duty (1023)
     if (signedDuty > MOTOR_MAX_DUTY) {
         signedDuty = MOTOR_MAX_DUTY;
     } else if (signedDuty < -MOTOR_MAX_DUTY) {
         signedDuty = -MOTOR_MAX_DUTY;
     }
 
+    // 2. Determining the direction
     if (signedDuty > 0) {
         in1Duty = (uint32_t)signedDuty;
     } else if (signedDuty < 0) {
         in2Duty = (uint32_t)(-signedDuty);
     }
 
+    // 3. Updating the duty
     ledc_set_duty(LEDC_LOW_SPEED_MODE, in1Channel, in1Duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, in1Channel);
     ledc_set_duty(LEDC_LOW_SPEED_MODE, in2Channel, in2Duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, in2Channel);
 }
-
 static void userInputTask(void *arg)
 {
-    (void)arg;
+    (void)arg; // Telling compiler "Don't need argument for this particular task, so don't ask"
 
     char inputBuffer[32];
     int inputDuty;
@@ -177,17 +184,41 @@ static void userInputTask(void *arg)
 
         inputDuty = strtol(inputBuffer, NULL, 10); //strtol = string to long integer
 
+        // Capping to max duty
         if (inputDuty > MOTOR_MAX_DUTY) {
             inputDuty = MOTOR_MAX_DUTY;
         } else if (inputDuty < -MOTOR_MAX_DUTY) {
             inputDuty = -MOTOR_MAX_DUTY;
         }
 
+        // Updating duty
         motorDuty = inputDuty;
 
         printf("Motor duty set to %d (%s)\n",
                motorDuty,
                motorDuty > 0 ? "forward" :
                motorDuty < 0 ? "reverse" : "stop");
+    }
+}
+static void limitSwitchTask(void *arg)
+{
+    gpio_config_t switchConfig = {
+        .pin_bit_mask = (1ULL << LIMIT_SWITCH_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&switchConfig);
+
+    while (1) {
+        if (gpio_get_level(LIMIT_SWITCH_GPIO) == 0) {
+            printf("Limit switch PRESSED\n");
+        } else {
+            printf("Limit switch RELEASED\n");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
