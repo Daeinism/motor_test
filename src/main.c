@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h> // For: Encoder
+#include <stdbool.h> // For: PID
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
@@ -35,7 +36,11 @@
 #define MOTOR2_IN2 GPIO_NUM_10
 
 #define MOTOR_MAX_DUTY 1023
-#define ENCODER_COUNTS_PER_REVOLUTION 330
+#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading
+#define POSITION_KP 1.0f
+#define POSITION_MIN_DUTY 400
+#define POSITION_MAX_DUTY 500
+#define POSITION_TOLERANCE 3
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -46,95 +51,27 @@ static void motorTask(void *arg);
 static void userInputTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
 static void limitSwitchTask(void *arg);
+static void encoderISR(void *arg);
+static void encoderInit(void);
+static void encoderTask(void *arg);
 
-// Encoder Related
+/*|Variable Declaration|-----------------------------------------------------*/
+    // static = makes the variable private for the lifetime of the program
+    // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
+static volatile int motorDuty = 0; 
+static volatile int32_t encoderCount = 0;
+static volatile int32_t targetEncoderCount = 0;
 static volatile uint8_t previousEncoderState = 0;
-static const int8_t DRAM_ATTR encoderTransitionTable[16] = {
+static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variables/arrays
      0, -1,  1,  0,  // transition 0~3
      1,  0,  0, -1,  // transition 4~7
     -1,  0,  0,  1,  // transition 8~11
      0,  1, -1,  0   // transition 12~15
 };
 
-
-static volatile int motorDuty = 0; 
-static volatile int32_t encoderCount = 0;
-// static = makes the variable private for the lifetime of the program
-// volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
-
 /*|Newly Added|---------------------------------------------------------------*/
-static void IRAM_ATTR encoderISR(void *arg) // Determine direction & Update encoder value
-{ 
-    // IRAM_ATTR: "Put this function inside the IRAM"
-    // ISR: "Interrupt Service Routine"
 
-    // 1. Putting A/B pin readings into one 2-digit format
-    uint8_t currentState =
-        (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
-        // reading bitwise, A is at 2nd digit, B is at 1st digit (from the right)
-        // if A=1, B=1, then it reads 11
-        // | sign is for combining two digits.
 
-    // 2. Combining current & previous to make one 4-digit format (0~15 available)
-    uint8_t transition = (previousEncoderState << 2) | currentState;
-
-    // 3. Add 1, 0 ,-1 depending on the transition status according to the Table
-    encoderCount += encoderTransitionTable[transition];
-
-    // 4. Updating previous value
-    previousEncoderState = currentState;
-
-}
-static void encoderInit(void) // Create encoder interrupt service
-{
-    // 0. Setting up the GPIO pin config for encoder wires
-    gpio_config_t encoderConfig = {
-        .pin_bit_mask = (1ULL << ENCODER_A_GPIO) | (1ULL << ENCODER_B_GPIO),
-            // 1ULL = 1 Unsigned Long Long (64bit)
-            // If gpio is 9, then "Move 1 to the left 9 times" -> 000100000000
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-    gpio_config(&encoderConfig); //apply the above setup
-
-    //
-    previousEncoderState = (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
-
-    /* 1. Setting the interruption condition. Options:
-        POSEDGE: LOW → HIGH     
-        NEGEDGE: HIGH → LOW    
-        ANYEDGE: ANY
-        LOW_LEVEL: while LOW
-        HIGH_LEVEL: while HIGH                        */
-    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_ANYEDGE);
-    gpio_set_intr_type(ENCODER_B_GPIO, GPIO_INTR_ANYEDGE);
-    
-    /* 2. Installing a service that can handle above gpio interrupt
-        - installing just once is sufficient for the entire program (ESP32 firmware)
-        - the public ISR service is now saved in GPIO driver internally */  
-    gpio_install_isr_service(0); // 0 = default setting
-
-    // 3. Registering encoderISR to selected GPIO pins
-    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
-    gpio_isr_handler_add(ENCODER_B_GPIO, encoderISR, NULL);
-}
-static void encoderTask(void *arg) // Prints encoder value
-{
-    int32_t previousCount = encoderCount;
-
-    while (1) {
-        int32_t currentCount = encoderCount;
-
-        if (currentCount != previousCount) {
-            printf("Encoder count: %ld\n", (long)currentCount);
-            previousCount = currentCount;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}
 
 /*|Main|---------------------------------------------------------------------*/
 void app_main(void)
@@ -147,7 +84,7 @@ void app_main(void)
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
     xTaskCreate(limitSwitchTask, "limitSwitchTask", 2048, NULL, 5, NULL);
-    xTaskCreate(encoderTask, "encoderTask", 2048, NULL, 1, NULL);
+    xTaskCreate(encoderTask, "encoderTask", 4096, NULL, 1, NULL);
 }
 
 /*|Function Definition|------------------------------------------------------*/
@@ -227,13 +164,39 @@ static void motorTask(void *arg)
     int previousDuty = 1;
 
     while (1) {
-        int requestedDuty = motorDuty; // making a snap shot of motorDuty to prevent potential error
+        // 1. Setting up the variables 
+        int32_t currentCount = encoderCount; // from encoderISR
+        int32_t targetCount = targetEncoderCount;
+        int32_t positionError = targetCount - currentCount;
+        int requestedDuty = 0;
+
+        // 2. Determining the move direction
+        if (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE) {
+            int32_t absoluteError = positionError > 0 ? positionError : -positionError;
+            int dutyMagnitude = (int)(POSITION_KP * absoluteError);
+
+            if (dutyMagnitude < POSITION_MIN_DUTY) {
+                dutyMagnitude = POSITION_MIN_DUTY;
+            } else if (dutyMagnitude > POSITION_MAX_DUTY) {
+                dutyMagnitude = POSITION_MAX_DUTY;
+            }
+
+            requestedDuty = positionError > 0 ? dutyMagnitude : -dutyMagnitude;
+        }
+
+        motorDuty = requestedDuty;
 
         if (requestedDuty != previousDuty) {
-            /* Stop briefly before changing speed or direction. */
-            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
-            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            bool directionChanged =
+                (requestedDuty > 0 && previousDuty < 0) ||
+                (requestedDuty < 0 && previousDuty > 0);
+
+            if (directionChanged) {
+                /* Stop briefly before changing speed or direction. */
+                setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
+                setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
 
             /* And then start moving again with new duty*/
             setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, requestedDuty);
@@ -241,7 +204,7 @@ static void motorTask(void *arg)
             previousDuty = requestedDuty;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(20)); // Refresh every 20ms
     }
 }
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty)
@@ -270,38 +233,26 @@ static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, i
     ledc_set_duty(LEDC_LOW_SPEED_MODE, in2Channel, in2Duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, in2Channel);
 }
-static void userInputTask(void *arg)
+static void userInputTask(void *arg) // Create targetEncoderCount from userInput
 {
     (void)arg; // Telling compiler "Don't need argument for this particular task, so don't ask"
 
     char inputBuffer[32];
-    int inputDuty;
+    int32_t inputTarget;
 
-    printf("Enter duty from -1023 to 1023:\n");
-    printf("Positive = forward, negative = reverse, 0 = stop\n");
+    printf("Enter target encoder count:\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
-            vTaskDelay(pdMS_TO_TICKS(20));
+            vTaskDelay(pdMS_TO_TICKS(20)); // loop every 20ms
             continue;
         }
 
-        inputDuty = strtol(inputBuffer, NULL, 10); //strtol = string to long integer
+        inputTarget = (int32_t)strtol(inputBuffer, NULL, 10); //strtol = string to long integer
 
-        // Capping to max duty
-        if (inputDuty > MOTOR_MAX_DUTY) {
-            inputDuty = MOTOR_MAX_DUTY;
-        } else if (inputDuty < -MOTOR_MAX_DUTY) {
-            inputDuty = -MOTOR_MAX_DUTY;
-        }
+        targetEncoderCount = inputTarget;
 
-        // Updating duty
-        motorDuty = inputDuty;
-
-        printf("Motor duty set to %d (%s)\n",
-               motorDuty,
-               motorDuty > 0 ? "forward" :
-               motorDuty < 0 ? "reverse" : "stop");
+        printf("Target encoder count set to %ld\n", (long)targetEncoderCount);
     }
 }
 static void limitSwitchTask(void *arg)
@@ -337,5 +288,78 @@ static void limitSwitchTask(void *arg)
         }
 
         vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+static void IRAM_ATTR encoderISR(void *arg) // Determine direction & Update encoder value
+{ 
+    // IRAM_ATTR: "Put this function inside the IRAM"
+    // ISR: "Interrupt Service Routine"
+
+    // 1. Putting A/B pin readings into one 2-digit format
+    uint8_t currentState =
+        (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
+        // reading bitwise, A is at 2nd digit, B is at 1st digit (from the right)
+        // if A=1, B=1, then it reads 11
+        // | sign is for combining two digits.
+
+    // 2. Combining current & previous to make one 4-digit format (0~15 available)
+    uint8_t transition = (previousEncoderState << 2) | currentState;
+
+    // 3. Add 1, 0 ,-1 depending on the transition status according to the Table
+    encoderCount += encoderTransitionTable[transition];
+
+    // 4. Updating previous value
+    previousEncoderState = currentState;
+
+}
+static void encoderInit(void) // Create encoder interrupt service
+{
+    // 0. Setting up the GPIO pin config for encoder wires
+    gpio_config_t encoderConfig = {
+        .pin_bit_mask = (1ULL << ENCODER_A_GPIO) | (1ULL << ENCODER_B_GPIO),
+            // 1ULL = 1 Unsigned Long Long (64bit)
+            // If gpio is 9, then "Move 1 to the left 9 times" -> 000100000000
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&encoderConfig); //apply the above setup
+
+    //
+    previousEncoderState = (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
+
+    /* 1. Setting the interruption condition. Options:
+        POSEDGE: LOW → HIGH     
+        NEGEDGE: HIGH → LOW    
+        ANYEDGE: ANY
+        LOW_LEVEL: while LOW
+        HIGH_LEVEL: while HIGH                        */
+    gpio_set_intr_type(ENCODER_A_GPIO, GPIO_INTR_ANYEDGE);
+    gpio_set_intr_type(ENCODER_B_GPIO, GPIO_INTR_ANYEDGE);
+    
+    /* 2. Installing a service that can handle above gpio interrupt
+        - installing just once is sufficient for the entire program (ESP32 firmware)
+        - the public ISR service is now saved in GPIO driver internally */  
+    gpio_install_isr_service(0); // 0 = default setting
+
+    // 3. Registering encoderISR to selected GPIO pins
+    gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
+    gpio_isr_handler_add(ENCODER_B_GPIO, encoderISR, NULL);
+}
+static void encoderTask(void *arg) // Prints encoder value
+{
+    int32_t previousCount = encoderCount;
+
+    while (1) {
+        int32_t currentCount = encoderCount;
+
+        if (currentCount != previousCount) {
+            printf("Encoder count: %ld\n", (long)currentCount);
+            previousCount = currentCount;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
