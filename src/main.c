@@ -37,10 +37,10 @@
 
 #define MOTOR_MAX_DUTY 1023
 #define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading
-#define POSITION_KP 1.0f
+#define POSITION_KP 1.0f // Proportional Gain per error
 #define POSITION_MIN_DUTY 400
 #define POSITION_MAX_DUTY 500
-#define POSITION_TOLERANCE 3
+#define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -54,6 +54,7 @@ static void limitSwitchTask(void *arg);
 static void encoderISR(void *arg);
 static void encoderInit(void);
 static void encoderTask(void *arg);
+static float getCurrentAngle(void);
 
 /*|Variable Declaration|-----------------------------------------------------*/
     // static = makes the variable private for the lifetime of the program
@@ -88,15 +89,16 @@ void app_main(void)
 }
 
 /*|Function Definition|------------------------------------------------------*/
-static void gpioInit(void)
+static void gpioInit(void) // Initializing simple gpios
 {
     gpio_reset_pin(TEST_LED_GPIO);
     gpio_set_direction(TEST_LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(TEST_LED_GPIO, 0);
 }
-static void motorPwmInit(void) 
+static void motorPwmInit(void) // Setting up timer & channels
 {
 
+    // 0. Setting the timer for Pwm
     ledc_timer_config_t timer = { //configuration setting (won't need timer for anything else)
         .speed_mode = LEDC_LOW_SPEED_MODE, //default for ESP32 S3 Hardware (no need change) 
         .timer_num = LEDC_TIMER_0, // ESP32 S3 has 4 LEDC hardware timer & 8 Channels
@@ -104,9 +106,9 @@ static void motorPwmInit(void)
         .freq_hz = 20000, // common choice for DC motor
         .clk_cfg = LEDC_AUTO_CLK // (default) the driver picks clock source automatically 
     };
-
     ledc_timer_config(&timer); // pass the data to the function that programs the hardware
 
+    // 1. Configuring each channel
     ledc_channel_config_t channels[] = {
         {
             .gpio_num = MOTOR1_IN1,
@@ -142,11 +144,11 @@ static void motorPwmInit(void)
         }
     };
 
-    for (int i = 0; i < 4; i++) {
-        ledc_channel_config(&channels[i]); //applying the above configuration for all 4 channels
+    for (int i = 0; i < 4; i++) { //applying the above configuration for all 4 channels
+        ledc_channel_config(&channels[i]); 
     }
 }
-static void ledTask(void *arg)
+static void ledTask(void *arg) // Simple LED task for test
 {
     while (1) 
     {
@@ -157,7 +159,7 @@ static void ledTask(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-static void motorTask(void *arg)
+static void motorTask(void *arg) // Processing Target & Error and tossing RequestedDuty to SetMotorDuty
 {
     (void)arg; // telling compiler "Yes, we are not using the arguments. Stop asking."
 
@@ -165,46 +167,48 @@ static void motorTask(void *arg)
 
     while (1) {
         // 1. Setting up the variables 
-        int32_t currentCount = encoderCount; // from encoderISR
-        int32_t targetCount = targetEncoderCount;
-        int32_t positionError = targetCount - currentCount;
-        int requestedDuty = 0;
+        int32_t currentCount = encoderCount; // Snapshot the target value from encoderISR
+        int32_t targetCount = targetEncoderCount; // Snapshot the target value from userInputTask
+        int32_t positionError = targetCount - currentCount; // Get the positionError for later calculation
+        int requestedDuty = 0; // Initializing the request value to 0 first.
 
         // 2. Determining the move direction
-        if (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE) {
-            int32_t absoluteError = positionError > 0 ? positionError : -positionError;
-            int dutyMagnitude = (int)(POSITION_KP * absoluteError);
+        if (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE) 
+        {
+            int32_t absoluteError = positionError > 0 ? positionError : -positionError; // creating an absolute value (+)
+            int dutyMagnitude = (int)(POSITION_KP * absoluteError); // applying Proportional Gain to the absolute value
 
-            if (dutyMagnitude < POSITION_MIN_DUTY) {
+            // Adjusting the value within the MIN & MAX duty value range
+            if (dutyMagnitude < POSITION_MIN_DUTY) { 
                 dutyMagnitude = POSITION_MIN_DUTY;
             } else if (dutyMagnitude > POSITION_MAX_DUTY) {
                 dutyMagnitude = POSITION_MAX_DUTY;
             }
 
-            requestedDuty = positionError > 0 ? dutyMagnitude : -dutyMagnitude;
+            // applying the direction of requestedDuty based on position Error
+            requestedDuty = positionError > 0 ? dutyMagnitude : -dutyMagnitude; 
         }
 
         motorDuty = requestedDuty;
 
         if (requestedDuty != previousDuty) {
-            bool directionChanged =
-                (requestedDuty > 0 && previousDuty < 0) ||
-                (requestedDuty < 0 && previousDuty > 0);
 
-            if (directionChanged) {
-                /* Stop briefly before changing speed or direction. */
+            bool directionChanged = (requestedDuty > 0 && previousDuty < 0) || (requestedDuty < 0 && previousDuty > 0);
+                // if either condition is met, then it means the direction has changed
+
+            if (directionChanged) { // If direction is changed, Stop briefly before changing speed or direction. 
                 setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
                 setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
 
-            /* And then start moving again with new duty*/
+            // And then start moving again with new duty
             setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, requestedDuty);
             setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, requestedDuty);
             previousDuty = requestedDuty;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20)); // Refresh every 20ms
+        vTaskDelay(pdMS_TO_TICKS(20)); // Refresh this duty cycle every 20ms
     }
 }
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty)
@@ -216,14 +220,16 @@ static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, i
     // 1. Capping to max duty (1023)
     if (signedDuty > MOTOR_MAX_DUTY) {
         signedDuty = MOTOR_MAX_DUTY;
-    } else if (signedDuty < -MOTOR_MAX_DUTY) {
+    } 
+    else if (signedDuty < -MOTOR_MAX_DUTY) {
         signedDuty = -MOTOR_MAX_DUTY;
     }
 
     // 2. Determining the direction
     if (signedDuty > 0) {
         in1Duty = (uint32_t)signedDuty;
-    } else if (signedDuty < 0) {
+    } 
+    else if (signedDuty < 0) {
         in2Duty = (uint32_t)(-signedDuty);
     }
 
@@ -255,7 +261,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from userInput
         printf("Target encoder count set to %ld\n", (long)targetEncoderCount);
     }
 }
-static void limitSwitchTask(void *arg)
+static void limitSwitchTask(void *arg) 
 {
     // 0. setting up the gpio configuation
     gpio_config_t switchConfig = {
@@ -297,8 +303,7 @@ static void IRAM_ATTR encoderISR(void *arg) // Determine direction & Update enco
     // ISR: "Interrupt Service Routine"
 
     // 1. Putting A/B pin readings into one 2-digit format
-    uint8_t currentState =
-        (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
+    uint8_t currentState = (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
         // reading bitwise, A is at 2nd digit, B is at 1st digit (from the right)
         // if A=1, B=1, then it reads 11
         // | sign is for combining two digits.
@@ -327,7 +332,6 @@ static void encoderInit(void) // Create encoder interrupt service
     };
     gpio_config(&encoderConfig); //apply the above setup
 
-    //
     previousEncoderState = (gpio_get_level(ENCODER_A_GPIO) << 1) | gpio_get_level(ENCODER_B_GPIO);
 
     /* 1. Setting the interruption condition. Options:
@@ -348,7 +352,12 @@ static void encoderInit(void) // Create encoder interrupt service
     gpio_isr_handler_add(ENCODER_A_GPIO, encoderISR, NULL);
     gpio_isr_handler_add(ENCODER_B_GPIO, encoderISR, NULL);
 }
-static void encoderTask(void *arg) // Prints encoder value
+static float getCurrentAngle(void)
+{
+    int32_t currentCount = encoderCount;
+    return ((float)currentCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
+}
+static void encoderTask(void *arg) // Prints encoder value & Angle
 {
     int32_t previousCount = encoderCount;
 
@@ -356,7 +365,7 @@ static void encoderTask(void *arg) // Prints encoder value
         int32_t currentCount = encoderCount;
 
         if (currentCount != previousCount) {
-            printf("Encoder count: %ld\n", (long)currentCount);
+            printf("Encoder count: %ld, Angle: %.2f degrees\n", (long)currentCount, getCurrentAngle());
             previousCount = currentCount;
         }
 
