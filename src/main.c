@@ -62,6 +62,7 @@ static float getCurrentAngle(void);
 static volatile int motorDuty = 0; 
 static volatile int32_t encoderCount = 0;
 static volatile int32_t targetEncoderCount = 0;
+static volatile bool positionControlEnabled = true; // for lock or release
 static volatile uint8_t previousEncoderState = 0;
 static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variables/arrays
      0, -1,  1,  0,  // transition 0~3
@@ -171,9 +172,11 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         int32_t targetCount = targetEncoderCount; // Snapshot the target value from userInputTask
         int32_t positionError = targetCount - currentCount; // Get the positionError for later calculation
         int requestedDuty = 0; // Initializing the request value to 0 first.
-
+        bool controlEnabled = positionControlEnabled; // Updated by userInputTask
+ 
         // 2. Determining the move direction
-        if (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE) 
+        if (controlEnabled && // only if the motor control is enabled
+            (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)) 
         {
             int32_t absoluteError = positionError > 0 ? positionError : -positionError; // creating an absolute value (+)
             int dutyMagnitude = (int)(POSITION_KP * absoluteError); // applying Proportional Gain to the absolute value
@@ -246,7 +249,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     char inputBuffer[32];
     float inputDegrees;
 
-    printf("Enter target angle from home in degrees, or type home:\n");
+    printf("Enter target angle from home in degrees, or type home/release/hold:\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
@@ -254,11 +257,32 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        /*------------------------|Simple Homing Function|--------------------------*/
+        /*------------------------|Simple Homing Command|--------------------------*/
         if (strncmp(inputBuffer, "home", 4) == 0) {
             encoderCount = 0;
             targetEncoderCount = 0;
             printf("Current position set as home: 0.00 degrees\n");
+            continue;
+        }
+
+        /*------------------------|Simple Release Command|--------------------------*/
+        if (strncmp(inputBuffer, "release", 7) == 0) {
+            positionControlEnabled = false;
+            targetEncoderCount = encoderCount;
+            printf("Position control released\n");
+            continue;
+        }
+
+        /*------------------------|Simple Hold Command|-----------------------------*/
+        if (strncmp(inputBuffer, "hold", 4) == 0) {
+            targetEncoderCount = encoderCount;
+            positionControlEnabled = true;
+            printf("Current position hold enabled\n");
+            continue;
+        }
+
+        if (!positionControlEnabled) {
+            printf("Position control is released. Type hold first.\n");
             continue;
         }
 
