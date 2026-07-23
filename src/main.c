@@ -37,9 +37,10 @@
 
 #define MOTOR_MAX_DUTY 1023
 #define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading
-#define POSITION_KP 1.0f // Proportional Gain per error
-#define POSITION_MIN_DUTY 400
-#define POSITION_MAX_DUTY 500
+#define POSITION_KP 1.0f // PID-P: Proportional Gain per error
+#define POSITION_KD 0.3f // PID-D: Derivative
+#define POSITION_MIN_DUTY 450 // recommended minimum (lower than 450 may result in weak output)
+#define POSITION_MAX_DUTY 700 // 
 #define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
 
 
@@ -165,31 +166,53 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
     (void)arg; // telling compiler "Yes, we are not using the arguments. Stop asking."
 
     int previousDuty = 1;
+    int32_t previousCountForDerivative = encoderCount; // for PID_D calculation
 
     while (1) {
         // 1. Setting up the variables 
         int32_t currentCount = encoderCount; // Snapshot the target value from encoderISR
         int32_t targetCount = targetEncoderCount; // Snapshot the target value from userInputTask
         int32_t positionError = targetCount - currentCount; // Get the positionError for later calculation
+        float encoderVelocity = (currentCount - previousCountForDerivative) / 0.02f; //0.02 = 20ms
         int requestedDuty = 0; // Initializing the request value to 0 first.
         bool controlEnabled = positionControlEnabled; // Updated by userInputTask
- 
+
+        previousCountForDerivative = currentCount;
+
         // 2. Determining the move direction
         if (controlEnabled && // only if the motor control is enabled
             (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)) 
         {
-            int32_t absoluteError = positionError > 0 ? positionError : -positionError; // creating an absolute value (+)
-            int dutyMagnitude = (int)(POSITION_KP * absoluteError); // applying Proportional Gain to the absolute value
+            float controlOutput =
+                (POSITION_KP * positionError) - (POSITION_KD * encoderVelocity);
 
-            // Adjusting the value within the MIN & MAX duty value range
-            if (dutyMagnitude < POSITION_MIN_DUTY) { 
-                dutyMagnitude = POSITION_MIN_DUTY;
-            } else if (dutyMagnitude > POSITION_MAX_DUTY) {
-                dutyMagnitude = POSITION_MAX_DUTY;
+            bool outputMovesTowardTarget =
+                (positionError > 0 && controlOutput > 0.0f) ||
+                (positionError < 0 && controlOutput < 0.0f);
+
+            if (outputMovesTowardTarget) {
+                int dutyMagnitude;
+
+                if (controlOutput > 0.0f) {
+                    dutyMagnitude = (int)controlOutput;
+                } else {
+                    dutyMagnitude = (int)(-controlOutput);
+                }
+
+                // Adjusting the value within the MIN & MAX duty value range
+                if (dutyMagnitude < POSITION_MIN_DUTY) { 
+                    dutyMagnitude = POSITION_MIN_DUTY;
+                } else if (dutyMagnitude > POSITION_MAX_DUTY) {
+                    dutyMagnitude = POSITION_MAX_DUTY;
+                }
+
+                // applying the direction of requestedDuty based on position Error
+                if (controlOutput > 0.0f) {
+                    requestedDuty = dutyMagnitude;
+                } else {
+                    requestedDuty = -dutyMagnitude;
+                }
             }
-
-            // applying the direction of requestedDuty based on position Error
-            requestedDuty = positionError > 0 ? dutyMagnitude : -dutyMagnitude; 
         }
 
         motorDuty = requestedDuty;
