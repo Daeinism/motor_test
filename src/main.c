@@ -26,7 +26,8 @@
 
 /*|Macro|--------------------------------------------------------------------*/
 #define TEST_LED_GPIO GPIO_NUM_36
-#define LIMIT_SWITCH_GPIO GPIO_NUM_42
+#define LINK1_LEFT_LIMIT_GPIO GPIO_NUM_41
+#define LINK1_RIGHT_LIMIT_GPIO GPIO_NUM_42
 #define ENCODER_A_GPIO GPIO_NUM_17
 #define ENCODER_B_GPIO GPIO_NUM_18
 
@@ -183,16 +184,17 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         if (controlEnabled && // only if the motor control is enabled
             (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)) 
         {
-            float controlOutput =
-                (POSITION_KP * positionError) - (POSITION_KD * encoderVelocity);
+            // P D calculations
+            float controlOutput = (POSITION_KP * positionError) - (POSITION_KD * encoderVelocity);
 
-            bool outputMovesTowardTarget =
+            bool outputMovesTowardTarget = // Deciding whether or not need to move the motor
                 (positionError > 0 && controlOutput > 0.0f) ||
                 (positionError < 0 && controlOutput < 0.0f);
 
             if (outputMovesTowardTarget) {
                 int dutyMagnitude;
 
+                // Turning float into int value with direction
                 if (controlOutput > 0.0f) {
                     dutyMagnitude = (int)controlOutput;
                 } else {
@@ -338,7 +340,9 @@ static void limitSwitchTask(void *arg)
 {
     // 0. setting up the gpio configuation
     gpio_config_t switchConfig = {
-        .pin_bit_mask = (1ULL << LIMIT_SWITCH_GPIO), 
+        .pin_bit_mask =
+            (1ULL << LINK1_LEFT_LIMIT_GPIO) |
+            (1ULL << LINK1_RIGHT_LIMIT_GPIO),
             // << means, moving that 1(ON) sign to the left multiple times (# of gpio number)
             // bit mask is used because same config can also be applied to multiple gpio if wanted
         .mode = GPIO_MODE_INPUT,
@@ -350,20 +354,31 @@ static void limitSwitchTask(void *arg)
     gpio_config(&switchConfig); // applying the above gpio configuration
 
     // 1. Detecting the change in limit switch state
-    int previousState = gpio_get_level(LIMIT_SWITCH_GPIO); //get_level to get the value
+    int previousLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO); //get_level to get the value
+    int previousRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
     while (1) {
-        int currentState = gpio_get_level(LIMIT_SWITCH_GPIO);
+        int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
+        int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
-        if (currentState != previousState) {
-            if (currentState == 0) {
-                encoderCount = 0; // Set the current limit-switch position as encoder zero
-                printf("Limit switch PRESSED\n");
+        if (currentLeftState != previousLeftState) {
+            if (currentLeftState == 0) {
+                printf("Link 1 Left limit switch PRESSED\n");
             } else {
-                printf("Limit switch RELEASED\n");
+                printf("Link 1 Left limit switch RELEASED\n");
             }
 
-            previousState = currentState;
+            previousLeftState = currentLeftState;
+        }
+
+        if (currentRightState != previousRightState) {
+            if (currentRightState == 0) {
+                printf("Link 1 Right limit switch PRESSED\n");
+            } else {
+                printf("Link 1 Right limit switch RELEASED\n");
+            }
+
+            previousRightState = currentRightState;
         }
 
         vTaskDelay(pdMS_TO_TICKS(20));
