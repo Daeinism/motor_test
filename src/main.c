@@ -246,7 +246,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     char inputBuffer[32];
     float inputDegrees;
 
-    printf("Enter relative angle in degrees:\n");
+    printf("Enter target angle from home in degrees, or type home:\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
@@ -254,28 +254,36 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        inputDegrees = strtof(inputBuffer, NULL); // save degrees in float
-
-        // Getting the movementCounts(float) value from the input degree
-        float movementCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
-        
-        // Round the float value to the nearest integer.
-        int32_t movementCounts;
-
-        // adding 0.5 or -0.5 before truncating into int for rounding
-        if (movementCountsFloat >= 0.0f) { 
-            movementCounts = (int32_t)(movementCountsFloat + 0.5f);
-        } 
-        else {
-            movementCounts = (int32_t)(movementCountsFloat - 0.5f);
+        /*------------------------|Simple Homing Function|--------------------------*/
+        if (strncmp(inputBuffer, "home", 4) == 0) {
+            encoderCount = 0;
+            targetEncoderCount = 0;
+            printf("Current position set as home: 0.00 degrees\n");
+            continue;
         }
 
-        // Setting the targetcount based on current count
-        targetEncoderCount = encoderCount + movementCounts;
+        inputDegrees = strtof(inputBuffer, NULL); // save degrees in float
+ 
+        /*-------------------------|Angle to Target Count|----------------------------*/
+        // Getting the targetCounts(float) value from the input degree
+        float targetCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
+         
+        // Round the float value to the nearest integer.
+        int32_t targetCounts;
 
-        printf("Move %.2f degrees (%ld counts), target count: %ld\n",
+        // adding 0.5 or -0.5 before truncating into int for rounding
+        if (targetCountsFloat >= 0.0f) { 
+            targetCounts = (int32_t)(targetCountsFloat + 0.5f);
+        } 
+        else {
+            targetCounts = (int32_t)(targetCountsFloat - 0.5f);
+        }
+
+        // Setting the targetcount based on home
+        targetEncoderCount = targetCounts;
+
+        printf("Target angle: %.2f degrees (%ld counts)\n",
                inputDegrees,
-               (long)movementCounts,
                (long)targetEncoderCount);
     }
 }
