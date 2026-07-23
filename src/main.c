@@ -65,6 +65,7 @@ static volatile int motorDuty = 0;
 static volatile int32_t encoderCount = 0;
 static volatile int32_t targetEncoderCount = 0;
 static volatile bool positionControlEnabled = true; // for lock or release
+static volatile bool limitSwitchPressed = false;
 static volatile uint8_t previousEncoderState = 0;
 static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variables/arrays
      0, -1,  1,  0,  // transition 0~3
@@ -176,7 +177,7 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         int32_t positionError = targetCount - currentCount; // Get the positionError for later calculation
         float encoderVelocity = (currentCount - previousCountForDerivative) / 0.02f; //0.02 = 20ms
         int requestedDuty = 0; // Initializing the request value to 0 first.
-        bool controlEnabled = positionControlEnabled; // Updated by userInputTask
+        bool controlEnabled = positionControlEnabled && !limitSwitchPressed; // Updated by userInputTask
 
         previousCountForDerivative = currentCount;
 
@@ -300,6 +301,11 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 
         /*------------------------|Simple Hold Command|-----------------------------*/
         if (strncmp(inputBuffer, "hold", 4) == 0) {
+            if (limitSwitchPressed) {
+                printf("Cannot hold while a limit switch is pressed\n");
+                continue;
+            }
+
             targetEncoderCount = encoderCount;
             positionControlEnabled = true;
             printf("Current position hold enabled\n");
@@ -353,13 +359,24 @@ static void limitSwitchTask(void *arg)
 
     gpio_config(&switchConfig); // applying the above gpio configuration
 
-    // 1. Detecting the change in limit switch state
+    // 1. Detecting the change in limit switch state (1 = Unpressed as default state)
     int previousLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO); //get_level to get the value
     int previousRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
     while (1) {
         int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
         int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
+
+        limitSwitchPressed = (currentLeftState == 0) || (currentRightState == 0);
+            // 0 = button is pressed
+
+        if (limitSwitchPressed && positionControlEnabled) {
+            positionControlEnabled = false;
+            targetEncoderCount = encoderCount;
+            motorDuty = 0;
+            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
+            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
+        }
 
         if (currentLeftState != previousLeftState) {
             if (currentLeftState == 0) {
