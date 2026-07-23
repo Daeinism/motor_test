@@ -239,14 +239,14 @@ static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, i
     ledc_set_duty(LEDC_LOW_SPEED_MODE, in2Channel, in2Duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, in2Channel);
 }
-static void userInputTask(void *arg) // Create targetEncoderCount from userInput
+static void userInputTask(void *arg) // Create targetEncoderCount from user angle input
 {
     (void)arg; // Telling compiler "Don't need argument for this particular task, so don't ask"
 
     char inputBuffer[32];
-    int32_t inputTarget;
+    float inputDegrees;
 
-    printf("Enter target encoder count:\n");
+    printf("Enter relative angle in degrees:\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
@@ -254,11 +254,29 @@ static void userInputTask(void *arg) // Create targetEncoderCount from userInput
             continue;
         }
 
-        inputTarget = (int32_t)strtol(inputBuffer, NULL, 10); //strtol = string to long integer
+        inputDegrees = strtof(inputBuffer, NULL); // save degrees in float
 
-        targetEncoderCount = inputTarget;
+        // Getting the movementCounts(float) value from the input degree
+        float movementCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
+        
+        // Round the float value to the nearest integer.
+        int32_t movementCounts;
 
-        printf("Target encoder count set to %ld\n", (long)targetEncoderCount);
+        // adding 0.5 or -0.5 before truncating into int for rounding
+        if (movementCountsFloat >= 0.0f) { 
+            movementCounts = (int32_t)(movementCountsFloat + 0.5f);
+        } 
+        else {
+            movementCounts = (int32_t)(movementCountsFloat - 0.5f);
+        }
+
+        // Setting the targetcount based on current count
+        targetEncoderCount = encoderCount + movementCounts;
+
+        printf("Move %.2f degrees (%ld counts), target count: %ld\n",
+               inputDegrees,
+               (long)movementCounts,
+               (long)targetEncoderCount);
     }
 }
 static void limitSwitchTask(void *arg) 
