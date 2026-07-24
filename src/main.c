@@ -344,6 +344,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
                (long)targetEncoderCount);
     }
 }
+
 static void limitSwitchTask(void *arg) 
 {
     (void)arg;
@@ -427,12 +428,12 @@ static void limitSwitchTask(void *arg)
         }
     }
 }
-
 static void IRAM_ATTR limitSwitchISR(void *arg)
 {
     (void)arg;
 
     BaseType_t higherPriorityTaskWoken = pdFALSE; //pdFALSE = FALSE (no other meaning)
+        // "Initially, no higher-priority task has been woken"
 
     limitSwitchPressed =
         (gpio_get_level(LINK1_LEFT_LIMIT_GPIO) == 0) ||
@@ -442,13 +443,16 @@ static void IRAM_ATTR limitSwitchISR(void *arg)
         positionControlEnabled = false;
     }
 
-    if (limitSafetyTaskHandle != NULL) { // if the TaskHandle exists inside the container
-        vTaskNotifyGiveFromISR(limitSafetyTaskHandle, &higherPriorityTaskWoken); // sending the address (so it can be modified later)
-        // System will turn the higherPriorityTaskWoken (initially pdFALSE) in to pdTRUE
+    if (limitSafetyTaskHandle != NULL) { // If the handle has been assigned to a valid task
+        vTaskNotifyGiveFromISR(
+            limitSafetyTaskHandle, // "Give the notification to the task that is waiting for it"
+            &higherPriorityTaskWoken /*"If the task that is waiting for the notification 
+            has a higher priority than the currently running task, set this variable to pdTRUE"*/
+        ); 
     }
 
     if (higherPriorityTaskWoken == pdTRUE) {
-        portYIELD_FROM_ISR(); // "Hey Scheduler, check again if there's any urgent Task to do (take care of mine)"
+        portYIELD_FROM_ISR(); // Immediately switch to the higher-priority task after the ISR
     }
 }
 
