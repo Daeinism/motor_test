@@ -67,7 +67,7 @@ static volatile int32_t encoderCount = 0;
 static volatile int32_t targetEncoderCount = 0;
 static volatile bool positionControlEnabled = true; // for lock or release
 static volatile bool limitSwitchPressed = false;
-static TaskHandle_t limitSafetyTaskHandle = NULL;
+static TaskHandle_t limitSafetyTaskHandle = NULL; // Create an Empty Handle (works like a container)
 static volatile uint8_t previousEncoderState = 0;
 static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variables/arrays
      0, -1,  1,  0,  // transition 0~3
@@ -90,7 +90,7 @@ void app_main(void)
     xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
-    xTaskCreate(limitSwitchTask, "limitSwitchTask", 4096, NULL, 10, NULL);
+    xTaskCreate(limitSwitchTask, "limitSwitchTask", 4096, NULL, 10, NULL); // Priority 10 (Higher than others)
     xTaskCreate(encoderTask, "encoderTask", 4096, NULL, 1, NULL);
 }
 
@@ -348,7 +348,7 @@ static void limitSwitchTask(void *arg)
 {
     (void)arg;
 
-    limitSafetyTaskHandle = xTaskGetCurrentTaskHandle(); // Each task has one handle
+    limitSafetyTaskHandle = xTaskGetCurrentTaskHandle(); // Put the current task's handle into the container
         // "Give me the handle for this task, so I can refer to it later"
 
     // 0. setting up the gpio configuation ------------------------------------------------
@@ -384,9 +384,13 @@ static void limitSwitchTask(void *arg)
         one notification so the first loop iteration checks and stops the motors.”*/
 
     while (1) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        // it blocks the entire loop and put the rest logic in sleep
-        // it let the while loop run ONLY WHEN 
+
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Run the rest of the loop ONLY IF the notify is taken.
+        /* pd = Portable Definition
+        pdTRUE: Clear all pending notifications after waking up.
+        pdFALSE: Consume one notification at a time.
+        portMAX_DELAY: Wait indefinitely until a notification is received.
+        */
 
         int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
         int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
@@ -428,7 +432,7 @@ static void IRAM_ATTR limitSwitchISR(void *arg)
 {
     (void)arg;
 
-    BaseType_t higherPriorityTaskWoken = pdFALSE;
+    BaseType_t higherPriorityTaskWoken = pdFALSE; //pdFALSE = FALSE (no other meaning)
 
     limitSwitchPressed =
         (gpio_get_level(LINK1_LEFT_LIMIT_GPIO) == 0) ||
@@ -438,12 +442,13 @@ static void IRAM_ATTR limitSwitchISR(void *arg)
         positionControlEnabled = false;
     }
 
-    if (limitSafetyTaskHandle != NULL) {
-        vTaskNotifyGiveFromISR(limitSafetyTaskHandle, &higherPriorityTaskWoken);
+    if (limitSafetyTaskHandle != NULL) { // if the TaskHandle exists inside the container
+        vTaskNotifyGiveFromISR(limitSafetyTaskHandle, &higherPriorityTaskWoken); // sending the address (so it can be modified later)
+        // System will turn the higherPriorityTaskWoken (initially pdFALSE) in to pdTRUE
     }
 
     if (higherPriorityTaskWoken == pdTRUE) {
-        portYIELD_FROM_ISR();
+        portYIELD_FROM_ISR(); // "Hey Scheduler, check again if there's any urgent Task to do (take care of mine)"
     }
 }
 
