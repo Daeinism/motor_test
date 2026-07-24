@@ -53,6 +53,7 @@ static void motorTask(void *arg);
 static void userInputTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
 static void limitSwitchTask(void *arg);
+static void limitSwitchISR(void *arg);
 static void encoderISR(void *arg);
 static void encoderInit(void);
 static void encoderTask(void *arg);
@@ -66,6 +67,7 @@ static volatile int32_t encoderCount = 0;
 static volatile int32_t targetEncoderCount = 0;
 static volatile bool positionControlEnabled = true; // for lock or release
 static volatile bool limitSwitchPressed = false;
+static TaskHandle_t limitSafetyTaskHandle = NULL;
 static volatile uint8_t previousEncoderState = 0;
 static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variables/arrays
      0, -1,  1,  0,  // transition 0~3
@@ -88,7 +90,7 @@ void app_main(void)
     xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
-    xTaskCreate(limitSwitchTask, "limitSwitchTask", 2048, NULL, 5, NULL);
+    xTaskCreate(limitSwitchTask, "limitSwitchTask", 4096, NULL, 10, NULL);
     xTaskCreate(encoderTask, "encoderTask", 4096, NULL, 1, NULL);
 }
 
@@ -344,7 +346,12 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 }
 static void limitSwitchTask(void *arg) 
 {
-    // 0. setting up the gpio configuation
+    (void)arg;
+
+    limitSafetyTaskHandle = xTaskGetCurrentTaskHandle(); // Each task has one handle
+        // "Give me the handle for this task, so I can refer to it later"
+
+    // 0. setting up the gpio configuation ------------------------------------------------
     gpio_config_t switchConfig = {
         .pin_bit_mask =
             (1ULL << LINK1_LEFT_LIMIT_GPIO) |
@@ -354,23 +361,40 @@ static void limitSwitchTask(void *arg)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE // setting interrupt function OFF
+        .intr_type = GPIO_INTR_ANYEDGE // Any change will trigger the interrupt  
     };
 
     gpio_config(&switchConfig); // applying the above gpio configuration
 
-    // 1. Detecting the change in limit switch state (1 = Unpressed as default state)
+    // 1. Detecting the change in limit switch state --------------------------------------
+        // (1 = Unpressed as default state)
     int previousLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO); //get_level to get the value
     int previousRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
+    limitSwitchPressed = (previousLeftState == 0) || (previousRightState == 0);
+
+    // Connecting / Registering the GPIOs to ISR
+    gpio_isr_handler_add(LINK1_LEFT_LIMIT_GPIO, limitSwitchISR, NULL);
+    gpio_isr_handler_add(LINK1_RIGHT_LIMIT_GPIO, limitSwitchISR, NULL);
+
+    if (limitSwitchPressed) {
+        xTaskNotifyGive(limitSafetyTaskHandle);
+    } 
+        /*“If a limit switch is already pressed when this task starts, give the task 
+        one notification so the first loop iteration checks and stops the motors.”*/
+
     while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // it blocks the entire loop and put the rest logic in sleep
+        // it let the while loop run ONLY WHEN 
+
         int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
         int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
         limitSwitchPressed = (currentLeftState == 0) || (currentRightState == 0);
             // 0 = button is pressed
 
-        if (limitSwitchPressed && positionControlEnabled) {
+        if (limitSwitchPressed) {
             positionControlEnabled = false;
             targetEncoderCount = encoderCount;
             motorDuty = 0;
@@ -397,8 +421,29 @@ static void limitSwitchTask(void *arg)
 
             previousRightState = currentRightState;
         }
+    }
+}
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+static void IRAM_ATTR limitSwitchISR(void *arg)
+{
+    (void)arg;
+
+    BaseType_t higherPriorityTaskWoken = pdFALSE;
+
+    limitSwitchPressed =
+        (gpio_get_level(LINK1_LEFT_LIMIT_GPIO) == 0) ||
+        (gpio_get_level(LINK1_RIGHT_LIMIT_GPIO) == 0);
+
+    if (limitSwitchPressed) {
+        positionControlEnabled = false;
+    }
+
+    if (limitSafetyTaskHandle != NULL) {
+        vTaskNotifyGiveFromISR(limitSafetyTaskHandle, &higherPriorityTaskWoken);
+    }
+
+    if (higherPriorityTaskWoken == pdTRUE) {
+        portYIELD_FROM_ISR();
     }
 }
 
