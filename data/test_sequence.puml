@@ -1,0 +1,59 @@
+@startuml
+title LP-SCARA Motor Test - Main Flow Summary
+
+actor User
+participant "app_main" as Main
+participant "FreeRTOS Tasks" as Tasks
+participant "Shared Control State" as State
+participant "Motor Hardware" as Motor
+participant "Encoder / Limit Switches" as Sensors
+
+== 1. System Startup ==
+
+Main -> Motor: Initialize GPIO and motor PWM
+Main -> Sensors: Initialize encoder interrupts
+Main -> Tasks: Create background tasks
+
+note right of Tasks
+LED task
+User input task
+Motor control task
+Encoder reporting task
+Limit-switch safety task
+end note
+
+== 2. User Sets a Target ==
+
+User -> Tasks: Enter target angle or command
+
+alt Target angle
+    Tasks -> State: Convert angle to encoder count\nand save target position
+else home
+    Tasks -> State: Set current and target position to zero
+else release / hold
+    Tasks -> State: Disable control or hold current position
+end
+
+== 3. Closed-Loop Position Control ==
+
+loop Every 20 ms
+    Sensors -> State: Encoder ISR updates current position
+    Tasks -> State: Read current and target position
+    Tasks -> Tasks: Calculate position error and PD output
+
+    alt Movement is required
+        Tasks -> Motor: Apply direction and PWM duty
+        Motor -> Sensors: Motor movement changes encoder
+    else Target reached or control disabled
+        Tasks -> Motor: Stop motor
+    end
+end
+
+== 4. Limit-Switch Safety ==
+
+Sensors -> Tasks: Limit-switch ISR wakes safety task
+Tasks -> State: Disable position control\nand target current position
+Tasks -> Motor: Stop both motors immediately
+Tasks -> User: Report pressed or released switch
+
+@enduml

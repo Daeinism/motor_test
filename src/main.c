@@ -25,23 +25,27 @@
 
 
 /*|Macro|--------------------------------------------------------------------*/
-#define TEST_LED_GPIO GPIO_NUM_36
-#define LINK1_LEFT_LIMIT_GPIO GPIO_NUM_41
-#define LINK1_RIGHT_LIMIT_GPIO GPIO_NUM_42
-#define ENCODER_A_GPIO GPIO_NUM_17
-#define ENCODER_B_GPIO GPIO_NUM_18
+#define TEST_LED_GPIO GPIO_NUM_12 //RED LED
+#define LINK1_LEFT_LIMIT_GPIO GPIO_NUM_4
+#define LINK1_RIGHT_LIMIT_GPIO GPIO_NUM_6
+#define LIMIT_SWITCH_DEBOUNCE_MS 25
 
-#define MOTOR1_IN1 GPIO_NUM_11
-#define MOTOR1_IN2 GPIO_NUM_12
-#define MOTOR2_IN1 GPIO_NUM_9
-#define MOTOR2_IN2 GPIO_NUM_10
+// Top Motor & Encoder 
+#define MOTOR1_IN1 GPIO_NUM_41
+#define MOTOR1_IN2 GPIO_NUM_42
+#define ENCODER_A_GPIO GPIO_NUM_35
+#define ENCODER_B_GPIO GPIO_NUM_36
+
+// Bottom Motor & Encoder
+#define MOTOR2_IN1 GPIO_NUM_1
+#define MOTOR2_IN2 GPIO_NUM_2
 
 #define MOTOR_MAX_DUTY 1023
-#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading
+#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
 #define POSITION_KP 1.0f // PID-P: Proportional Gain per error
-#define POSITION_KD 0.3f // PID-D: Derivative
-#define POSITION_MIN_DUTY 450 // recommended minimum (lower than 450 may result in weak output)
-#define POSITION_MAX_DUTY 700 // 
+#define POSITION_KD 0.4f // PID-D: Derivative
+#define POSITION_MIN_DUTY 600 // recommended minimum (lower than 450 may result in weak output)
+#define POSITION_MAX_DUTY 1000 
 #define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
 
 
@@ -373,6 +377,7 @@ static void limitSwitchTask(void *arg)
     int previousRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
     limitSwitchPressed = (previousLeftState == 0) || (previousRightState == 0);
+        // if either previous state is 0, then it means the limit switch is newly pressed
 
     // Connecting / Registering the GPIOs to ISR
     gpio_isr_handler_add(LINK1_LEFT_LIMIT_GPIO, limitSwitchISR, NULL);
@@ -393,38 +398,50 @@ static void limitSwitchTask(void *arg)
         portMAX_DELAY: Wait indefinitely until a notification is received.
         */
 
-        int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
-        int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
+        while (1) {
+            int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
+            int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
 
-        limitSwitchPressed = (currentLeftState == 0) || (currentRightState == 0);
-            // 0 = button is pressed
+            if ((currentLeftState == 0) || (currentRightState == 0) || limitSwitchPressed) {
+                limitSwitchPressed = true;
+                positionControlEnabled = false;
+                targetEncoderCount = encoderCount;
+                motorDuty = 0;
+                setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
+                setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
+            }
 
-        if (limitSwitchPressed) {
-            positionControlEnabled = false;
-            targetEncoderCount = encoderCount;
-            motorDuty = 0;
-            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
-            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
-        }
-
-        if (currentLeftState != previousLeftState) {
-            if (currentLeftState == 0) {
+            if ((currentLeftState == 0) && (previousLeftState != 0)) {
                 printf("Link 1 Left limit switch PRESSED\n");
-            } else {
-                printf("Link 1 Left limit switch RELEASED\n");
+                previousLeftState = 0;
             }
 
-            previousLeftState = currentLeftState;
-        }
-
-        if (currentRightState != previousRightState) {
-            if (currentRightState == 0) {
+            if ((currentRightState == 0) && (previousRightState != 0)) {
                 printf("Link 1 Right limit switch PRESSED\n");
-            } else {
-                printf("Link 1 Right limit switch RELEASED\n");
+                previousRightState = 0;
             }
 
-            previousRightState = currentRightState;
+            if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LIMIT_SWITCH_DEBOUNCE_MS)) != 0) {
+                continue;
+            }
+
+            currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
+            currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
+
+            if ((currentLeftState != previousLeftState) && (currentLeftState != 0)) {
+                printf("Link 1 Left limit switch RELEASED\n");
+                previousLeftState = currentLeftState;
+            }
+
+            if ((currentRightState != previousRightState) && (currentRightState != 0)) {
+                printf("Link 1 Right limit switch RELEASED\n");
+                previousRightState = currentRightState;
+            }
+
+            limitSwitchPressed = (currentLeftState == 0) || (currentRightState == 0);
+                // 0 = button is pressed
+
+            break;
         }
     }
 }
@@ -435,11 +452,12 @@ static void IRAM_ATTR limitSwitchISR(void *arg)
     BaseType_t higherPriorityTaskWoken = pdFALSE; //pdFALSE = FALSE (no other meaning)
         // "Initially, no higher-priority task has been woken"
 
-    limitSwitchPressed =
+    bool anyLimitSwitchPressed =
         (gpio_get_level(LINK1_LEFT_LIMIT_GPIO) == 0) ||
         (gpio_get_level(LINK1_RIGHT_LIMIT_GPIO) == 0);
 
-    if (limitSwitchPressed) {
+    if (anyLimitSwitchPressed) {
+        limitSwitchPressed = true;
         positionControlEnabled = false;
     }
 
