@@ -23,32 +23,24 @@
 #include "driver/gpio.h"
 
 #include "encoder.h"
+#include "limitSwitch.h"
 #include "motor.h"
 #include "statusLed.h"
 
 
 /*|Macro|--------------------------------------------------------------------*/
-#define LINK1_LEFT_LIMIT_GPIO GPIO_NUM_4
-#define LINK1_RIGHT_LIMIT_GPIO GPIO_NUM_6
-#define LIMIT_SWITCH_DEBOUNCE_MS 25
-
-// Bottom Motor & Encoder
 
 #define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
 
 
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
-static void limitSwitchTask(void *arg);
-static void limitSwitchISR(void *arg);
 static void encoderPrintTask(void *arg);
 static float getCurrentAngle(void);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
-static volatile bool limitSwitchPressed = false;
-static TaskHandle_t limitSafetyTaskHandle = NULL; // Create an Empty Handle (works like a container)
 
 /*|Main|---------------------------------------------------------------------*/
 void app_main(void)
@@ -56,9 +48,10 @@ void app_main(void)
     statusLedInit();
     encoderInit();
     motorInit(encoderGetCount);
+    limitSwitchInit(motorEmergencyStop);
+        // motorEmergencyStop is just a function pointer, not a function call.
 
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
-    xTaskCreate(limitSwitchTask, "limitSwitchTask", 4096, NULL, 10, NULL); // Priority 10 (Higher than others)
     xTaskCreate(encoderPrintTask, "encoderPrintTask", 4096, NULL, 1, NULL);
 }
 
@@ -95,7 +88,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 
         /*------------------------|Simple Hold Command|-----------------------------*/
         if (strncmp(inputBuffer, "hold", 4) == 0) {
-            if (limitSwitchPressed) {
+            if (limitSwitchIsAnyPressed()) {
                 printf("Cannot hold while a limit switch is pressed\n");
                 continue;
             }
@@ -133,127 +126,6 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
         printf("Target angle: %.2f degrees (%ld counts)\n",
                inputDegrees,
                (long)targetCounts);
-    }
-}
-
-static void limitSwitchTask(void *arg) 
-{
-    (void)arg;
-
-    limitSafetyTaskHandle = xTaskGetCurrentTaskHandle(); // Put the current task's handle into the container
-        // "Give me the handle for this task, so I can refer to it later"
-
-    // 0. setting up the gpio configuation ------------------------------------------------
-    gpio_config_t switchConfig = {
-        .pin_bit_mask =
-            (1ULL << LINK1_LEFT_LIMIT_GPIO) |
-            (1ULL << LINK1_RIGHT_LIMIT_GPIO),
-            // << means, moving that 1(ON) sign to the left multiple times (# of gpio number)
-            // bit mask is used because same config can also be applied to multiple gpio if wanted
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE // Any change will trigger the interrupt  
-    };
-
-    gpio_config(&switchConfig); // applying the above gpio configuration
-
-    // 1. Detecting the change in limit switch state --------------------------------------
-        // (1 = Unpressed as default state)
-    int previousLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO); //get_level to get the value
-    int previousRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
-
-    limitSwitchPressed = (previousLeftState == 0) || (previousRightState == 0);
-        // if either previous state is 0, then it means the limit switch is newly pressed
-
-    // Connecting / Registering the GPIOs to ISR
-    gpio_isr_handler_add(LINK1_LEFT_LIMIT_GPIO, limitSwitchISR, NULL);
-    gpio_isr_handler_add(LINK1_RIGHT_LIMIT_GPIO, limitSwitchISR, NULL);
-
-    if (limitSwitchPressed) {
-        xTaskNotifyGive(limitSafetyTaskHandle);
-    } 
-        /*“If a limit switch is already pressed when this task starts, give the task 
-        one notification so the first loop iteration checks and stops the motors.”*/
-
-    while (1) {
-
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Run the rest of the loop ONLY IF the notify is taken.
-        /* pd = Portable Definition
-        pdTRUE: Clear all pending notifications after waking up.
-        pdFALSE: Consume one notification at a time.
-        portMAX_DELAY: Wait indefinitely until a notification is received.
-        */
-
-        while (1) {
-            int currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
-            int currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
-
-            if ((currentLeftState == 0) || (currentRightState == 0) || limitSwitchPressed) {
-                limitSwitchPressed = true;
-                motorEmergencyStop();
-            }
-
-            if ((currentLeftState == 0) && (previousLeftState != 0)) {
-                printf("Link 1 Left limit switch PRESSED\n");
-                previousLeftState = 0;
-            }
-
-            if ((currentRightState == 0) && (previousRightState != 0)) {
-                printf("Link 1 Right limit switch PRESSED\n");
-                previousRightState = 0;
-            }
-
-            if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LIMIT_SWITCH_DEBOUNCE_MS)) != 0) {
-                continue;
-            }
-
-            currentLeftState = gpio_get_level(LINK1_LEFT_LIMIT_GPIO);
-            currentRightState = gpio_get_level(LINK1_RIGHT_LIMIT_GPIO);
-
-            if ((currentLeftState != previousLeftState) && (currentLeftState != 0)) {
-                printf("Link 1 Left limit switch RELEASED\n");
-                previousLeftState = currentLeftState;
-            }
-
-            if ((currentRightState != previousRightState) && (currentRightState != 0)) {
-                printf("Link 1 Right limit switch RELEASED\n");
-                previousRightState = currentRightState;
-            }
-
-            limitSwitchPressed = (currentLeftState == 0) || (currentRightState == 0);
-                // 0 = button is pressed
-
-            break;
-        }
-    }
-}
-static void IRAM_ATTR limitSwitchISR(void *arg)
-{
-    (void)arg;
-
-    BaseType_t higherPriorityTaskWoken = pdFALSE; //pdFALSE = FALSE (no other meaning)
-        // "Initially, no higher-priority task has been woken"
-
-    bool anyLimitSwitchPressed =
-        (gpio_get_level(LINK1_LEFT_LIMIT_GPIO) == 0) ||
-        (gpio_get_level(LINK1_RIGHT_LIMIT_GPIO) == 0);
-
-    if (anyLimitSwitchPressed) {
-        limitSwitchPressed = true;
-        motorDisableControlFromISR();
-    }
-
-    if (limitSafetyTaskHandle != NULL) { // If the handle has been assigned to a valid task
-        vTaskNotifyGiveFromISR(
-            limitSafetyTaskHandle, // "Give the notification to the task that is waiting for it"
-            &higherPriorityTaskWoken /*"If the task that is waiting for the notification 
-            has a higher priority than the currently running task, set this variable to pdTRUE"*/
-        ); 
-    }
-
-    if (higherPriorityTaskWoken == pdTRUE) {
-        portYIELD_FROM_ISR(); // Immediately switch to the higher-priority task after the ISR
     }
 }
 

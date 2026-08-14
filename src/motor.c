@@ -61,7 +61,7 @@ void motorRelease(void) // used by main.userInputTask
     }
 }
 
-void motorEmergencyStop(void) // used by main.limitSwitchTask
+void motorEmergencyStop(void) // registered as the limit switch pressed handler
 {
     positionControlEnabled = false;
 
@@ -70,11 +70,6 @@ void motorEmergencyStop(void) // used by main.limitSwitchTask
     }
 
     setAllMotorDuty(0);
-}
-
-void IRAM_ATTR motorDisableControlFromISR(void) // used by main.limitSwitchISR
-{
-    positionControlEnabled = false;
 }
 
 bool motorIsControlEnabled(void)
