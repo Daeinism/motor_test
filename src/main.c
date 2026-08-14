@@ -31,19 +31,22 @@
 #define LIMIT_SWITCH_DEBOUNCE_MS 25
 
 // Top Motor & Encoder 
-#define MOTOR1_IN1 GPIO_NUM_41
-#define MOTOR1_IN2 GPIO_NUM_42
-#define ENCODER_A_GPIO GPIO_NUM_35
-#define ENCODER_B_GPIO GPIO_NUM_36
+#define MOTOR1_IN1 GPIO_NUM_1
+#define MOTOR1_IN2 GPIO_NUM_2
+#define ENCODER_A_GPIO GPIO_NUM_39
+#define ENCODER_B_GPIO GPIO_NUM_38
 
 // Bottom Motor & Encoder
-#define MOTOR2_IN1 GPIO_NUM_1
-#define MOTOR2_IN2 GPIO_NUM_2
+#define MOTOR2_IN1 GPIO_NUM_21
+#define MOTOR2_IN2 GPIO_NUM_47
 
 #define MOTOR_MAX_DUTY 1023
 #define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
 #define POSITION_KP 1.0f // PID-P: Proportional Gain per error
-#define POSITION_KD 0.4f // PID-D: Derivative
+#define POSITION_KI 12.0f // PID-I: Integral Gain per error
+#define POSITION_KD 0.2f // PID-D: Derivative
+#define POSITION_INTEGRAL_ZONE 80 // starts integrating when the error is within this range (in counts)
+#define POSITION_INTEGRAL_MAX_OUTPUT 1000.0f // maximum output from the integral term (in counts)
 #define POSITION_MIN_DUTY 600 // recommended minimum (lower than 450 may result in weak output)
 #define POSITION_MAX_DUTY 1000 
 #define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
@@ -175,6 +178,9 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
 
     int previousDuty = 1;
     int32_t previousCountForDerivative = encoderCount; // for PID_D calculation
+    int32_t previousTargetCount = targetEncoderCount;
+    int32_t previousPositionError = 0;
+    float integralError = 0.0f;
 
     while (1) {
         // 1. Setting up the variables 
@@ -187,12 +193,37 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
 
         previousCountForDerivative = currentCount;
 
+        if (!controlEnabled || targetCount != previousTargetCount ||
+            (positionError > 0 && previousPositionError < 0) ||
+            (positionError < 0 && previousPositionError > 0)) {
+            integralError = 0.0f;
+        }
+
+        previousTargetCount = targetCount;
+        previousPositionError = positionError;
+
         // 2. Determining the move direction
         if (controlEnabled && // only if the motor control is enabled
             (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)) 
         {
+            if (positionError <= POSITION_INTEGRAL_ZONE && positionError >= -POSITION_INTEGRAL_ZONE) {
+                integralError += positionError * 0.02f;
+
+                float integralOutput = POSITION_KI * integralError;
+                if (integralOutput > POSITION_INTEGRAL_MAX_OUTPUT) {
+                    integralError = POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                } else if (integralOutput < -POSITION_INTEGRAL_MAX_OUTPUT) {
+                    integralError = -POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                }
+            } else {
+                integralError = 0.0f;
+            }
+
             // P D calculations
-            float controlOutput = (POSITION_KP * positionError) - (POSITION_KD * encoderVelocity);
+            float controlOutput =
+                (POSITION_KP * positionError) +
+                (POSITION_KI * integralError) -
+                (POSITION_KD * encoderVelocity);
 
             bool outputMovesTowardTarget = // Deciding whether or not need to move the motor
                 (positionError > 0 && controlOutput > 0.0f) ||
@@ -222,6 +253,8 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
                     requestedDuty = -dutyMagnitude;
                 }
             }
+        } else {
+            integralError = 0.0f;
         }
 
         motorDuty = requestedDuty;
