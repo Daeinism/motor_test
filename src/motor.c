@@ -32,7 +32,6 @@ static void motorTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
 static void setAllMotorDuty(int signedDuty);
 
-static volatile int motorDuty = 0; 
 static volatile int32_t targetEncoderCount = 0;
 static volatile bool positionControlEnabled = true; // for lock or release
 static MotorEncoderCountReader readEncoderCount = NULL;
@@ -46,10 +45,10 @@ void motorInit(MotorEncoderCountReader encoderCountReader)
 
 void motorSetTargetCount(int32_t targetCount)
 {
-    targetEncoderCount = targetCount;
+    targetEncoderCount = targetCount; // targetCount comes from main.userInputTask (user input degrees → targetCounts)
 }
 
-void motorHold(void)
+void motorHold(void) // used by main.userInputTask
 {
     if (readEncoderCount != NULL) {
         targetEncoderCount = readEncoderCount();
@@ -58,16 +57,16 @@ void motorHold(void)
     positionControlEnabled = true;
 }
 
-void motorRelease(void)
+void motorRelease(void) // used by main.userInputTask
 {
     positionControlEnabled = false;
 
     if (readEncoderCount != NULL) {
-        targetEncoderCount = readEncoderCount();
+        targetEncoderCount = readEncoderCount(); // set current position as target position when releasing the motor
     }
 }
 
-void motorEmergencyStop(void)
+void motorEmergencyStop(void) // used by main.limitSwitchTask
 {
     positionControlEnabled = false;
 
@@ -75,18 +74,18 @@ void motorEmergencyStop(void)
         targetEncoderCount = readEncoderCount();
     }
 
-    motorDuty = 0;
     setAllMotorDuty(0);
 }
 
-void IRAM_ATTR motorDisableControlFromISR(void)
+void IRAM_ATTR motorDisableControlFromISR(void) // used by main.limitSwitchISR
 {
     positionControlEnabled = false;
 }
 
 bool motorIsControlEnabled(void)
 {
-    return positionControlEnabled;
+    return positionControlEnabled; // true = motor is holding position, false = motor is released
+    // the purpose of this function is to share a private variable (positionControlEnabled) with other files (main.c)
 }
 
 static void motorPwmInit(void) // Setting up timer & channels
@@ -173,7 +172,7 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         previousTargetCount = targetCount;
         previousPositionError = positionError;
 
-        // 2. Determining the move direction
+        // 2. Determining the move direction & PID Control Logics
         if (controlEnabled && // only if the motor control is enabled
             (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)) 
         {
@@ -227,8 +226,6 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         } else {
             integralError = 0.0f;
         }
-
-        motorDuty = requestedDuty;
 
         if (requestedDuty != previousDuty) {
 
