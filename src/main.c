@@ -8,7 +8,7 @@
 #
 # Author: Dain Kim
 # Date Created: 2026-07-15
-# Last Modified: 2026-07-17
+# Last Modified: 2026-08-13
 # -----------------------------------------------------------------------------*/
 
 #include <stdlib.h>
@@ -23,9 +23,10 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h" //this is for PWM (NOT necessarily for LED)
 
+#include "statusLed.h"
+
 
 /*|Macro|--------------------------------------------------------------------*/
-#define TEST_LED_GPIO GPIO_NUM_12 //RED LED
 #define LINK1_LEFT_LIMIT_GPIO GPIO_NUM_4
 #define LINK1_RIGHT_LIMIT_GPIO GPIO_NUM_6
 #define LIMIT_SWITCH_DEBOUNCE_MS 25
@@ -53,9 +54,7 @@
 
 
 /*|Function Prototype|-------------------------------------------------------*/
-static void gpioInit(void);
 static void motorPwmInit(void);
-static void ledTask(void *arg);
 static void motorTask(void *arg);
 static void userInputTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
@@ -90,11 +89,10 @@ static const int8_t DRAM_ATTR encoderTransitionTable[16] = { //DRAM for variable
 /*|Main|---------------------------------------------------------------------*/
 void app_main(void)
 {
-    gpioInit();
+    statusLedInit();
     motorPwmInit();
     encoderInit();
 
-    xTaskCreate(ledTask, "ledTask", 2048, NULL, 1, NULL);
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
     xTaskCreate(limitSwitchTask, "limitSwitchTask", 4096, NULL, 10, NULL); // Priority 10 (Higher than others)
@@ -102,12 +100,6 @@ void app_main(void)
 }
 
 /*|Function Definition|------------------------------------------------------*/
-static void gpioInit(void) // Initializing simple gpios
-{
-    gpio_reset_pin(TEST_LED_GPIO);
-    gpio_set_direction(TEST_LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(TEST_LED_GPIO, 0);
-}
 static void motorPwmInit(void) // Setting up timer & channels
 {
 
@@ -159,17 +151,6 @@ static void motorPwmInit(void) // Setting up timer & channels
 
     for (int i = 0; i < 4; i++) { //applying the above configuration for all 4 channels
         ledc_channel_config(&channels[i]); 
-    }
-}
-static void ledTask(void *arg) // Simple LED task for test
-{
-    while (1) 
-    {
-        gpio_set_level(TEST_LED_GPIO, 1);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        gpio_set_level(TEST_LED_GPIO, 0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 static void motorTask(void *arg) // Processing Target & Error and tossing RequestedDuty to SetMotorDuty
