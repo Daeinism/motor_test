@@ -88,7 +88,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 
         /*------------------------|Simple Hold Command|-----------------------------*/
         if (strncmp(inputBuffer, "hold", 4) == 0) {
-            if (limitSwitchIsAnyPressed()) {
+            if (limitSwitchAnyIsPressed()) {
                 printf("Cannot hold while a limit switch is pressed\n");
                 continue;
             }

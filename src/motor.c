@@ -7,14 +7,14 @@
 #include "freertos/task.h"
 
 #include "driver/gpio.h"
-#include "driver/ledc.h" //this is for PWM (NOT necessarily for LED)
+#include "driver/ledc.h" // this is for PWM (NOT necessarily for LED)
 
 #include "pidCalculator.h"
 
 #define MOTOR1_IN1 GPIO_NUM_1
 #define MOTOR1_IN2 GPIO_NUM_2
-#define MOTOR2_IN1 GPIO_NUM_21
-#define MOTOR2_IN2 GPIO_NUM_47
+#define MOTOR2_IN1 GPIO_NUM_41
+#define MOTOR2_IN2 GPIO_NUM_42
 
 #define MOTOR_MAX_DUTY 1023
 

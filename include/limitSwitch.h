@@ -6,8 +6,10 @@
 typedef void (*LimitSwitchPressedHandler)(void);
 
 void limitSwitchInit(LimitSwitchPressedHandler pressedHandler);
-bool limitSwitchIsAnyPressed(void);
-bool limitSwitchIsLeftPressed(void);
-bool limitSwitchIsRightPressed(void);
+bool limitSwitchAnyIsPressed(void);
+bool limitSwitchLink1LeftIsPressed(void);
+bool limitSwitchLink1RightIsPressed(void);
+bool limitSwitchLink2LeftIsPressed(void);
+bool limitSwitchLink2RightIsPressed(void);
 
 #endif

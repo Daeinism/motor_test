@@ -105,8 +105,9 @@ int pidCalculatorUpdate(int32_t targetCount, int32_t currentCount, float deltaTi
     return requestedDuty;
 }
 
-void pidCalculatorReset(void)
+void pidCalculatorReset(void) // clears the PID calculator's internal memory
 {
+    // this reset is necessary because the PID-I term can accumulate over time and cause overshoot or oscillation
     calculationInitialized = false;
     previousCountForDerivative = 0;
     previousTargetCount = 0;
