@@ -26,6 +26,7 @@
 #include "limitSwitch.h"
 #include "motor.h"
 #include "statusLed.h"
+#include "voltageReader.h"
 
 
 /*|Macro|--------------------------------------------------------------------*/
@@ -50,6 +51,7 @@ void app_main(void)
     motorInit(encoderGetCount);
     limitSwitchInit(motorEmergencyStop);
         // motorEmergencyStop is just a function pointer, not a function call.
+    voltageReaderInit();
 
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
     xTaskCreate(encoderPrintTask, "encoderPrintTask", 4096, NULL, 1, NULL);
