@@ -119,6 +119,6 @@ static void voltageReaderTask(void *arg)
             printf("Battery: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

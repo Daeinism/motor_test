@@ -37,7 +37,7 @@
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
 static void encoderPrintTask(void *arg);
-static float getCurrentAngle(void);
+static float getAngleFromCount(int32_t encoderCount);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
@@ -48,7 +48,7 @@ void app_main(void)
 {
     statusLedInit();
     encoderInit();
-    motorInit(encoderGetCount);
+    motorInit(encoderGetLink1Count);
     limitSwitchInit(motorEmergencyStop);
         // motorEmergencyStop is just a function pointer, not a function call.
     voltageReaderInit();
@@ -75,7 +75,8 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 
         /*------------------------|Simple Homing Command|--------------------------*/
         if (strncmp(inputBuffer, "home", 4) == 0) {
-            encoderResetCount();
+            encoderResetLink1Count();
+            encoderResetLink2Count();
             motorSetTargetCount(0);
             printf("Current position set as home: 0.00 degrees\n");
             continue;
@@ -131,24 +132,31 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     }
 }
 
-static float getCurrentAngle(void)
+static float getAngleFromCount(int32_t encoderCount)
 {
-    int32_t currentCount = encoderGetCount();
-    return ((float)currentCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
+    return ((float)encoderCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
 }
 
 static void encoderPrintTask(void *arg) // Prints encoder value & Angle
 {
     (void)arg;
 
-    int32_t previousCount = encoderGetCount();
+    int32_t previousLink1Count = encoderGetLink1Count();
+    int32_t previousLink2Count = encoderGetLink2Count();
 
     while (1) {
-        int32_t currentCount = encoderGetCount();
+        int32_t currentLink1Count = encoderGetLink1Count();
+        int32_t currentLink2Count = encoderGetLink2Count();
 
-        if (currentCount != previousCount) {
-            printf("Encoder count: %ld, Angle: %.2f degrees\n", (long)currentCount, getCurrentAngle());
-            previousCount = currentCount;
+        if ((currentLink1Count != previousLink1Count) ||
+            (currentLink2Count != previousLink2Count)) {
+            printf("Link 1: %ld counts, %.2f degrees | Link 2: %ld counts, %.2f degrees\n",
+                   (long)currentLink1Count,
+                   getAngleFromCount(currentLink1Count),
+                   (long)currentLink2Count,
+                   getAngleFromCount(currentLink2Count));
+            previousLink1Count = currentLink1Count;
+            previousLink2Count = currentLink2Count;
         }
 
         vTaskDelay(pdMS_TO_TICKS(500));
