@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
+
 void encoderInit(void);
 int32_t encoderGetLink1Count(void);
 int32_t encoderGetLink2Count(void);

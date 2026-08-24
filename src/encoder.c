@@ -1,8 +1,10 @@
 #include "encoder.h"
 
 #include <stdint.h> // For: Encoder
+#include <stdio.h>
 
 #include "freertos/FreeRTOS.h" // do not remove this
+#include "freertos/task.h"
 
 #include "driver/gpio.h"
 
@@ -13,6 +15,8 @@
 
 static void link1EncoderISR(void *arg);
 static void link2EncoderISR(void *arg);
+static void encoderPrintTask(void *arg);
+static float getAngleFromCount(int32_t encoderCount);
 
 // static = makes the variable private for the lifetime of the program
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
@@ -73,6 +77,8 @@ void encoderInit(void) // Create encoder interrupt service
     gpio_isr_handler_add(LINK1_ENCODER_B_GPIO, link1EncoderISR, NULL);
     gpio_isr_handler_add(LINK2_ENCODER_A_GPIO, link2EncoderISR, NULL);
     gpio_isr_handler_add(LINK2_ENCODER_B_GPIO, link2EncoderISR, NULL);
+
+    xTaskCreate(encoderPrintTask, "encoderPrintTask", 4096, NULL, 1, NULL);
 }
 
 int32_t encoderGetLink1Count(void) // used by main to send the encoder value to the motorTask for PID calculation
@@ -127,4 +133,35 @@ static void IRAM_ATTR link2EncoderISR(void *arg)
     link2EncoderCount += encoderTransitionTable[transition];
 
     previousLink2EncoderState = currentState;
+}
+
+static float getAngleFromCount(int32_t encoderCount)
+{
+    return ((float)encoderCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
+}
+
+static void encoderPrintTask(void *arg) // Prints encoder value & Angle
+{
+    (void)arg;
+
+    int32_t previousLink1Count = encoderGetLink1Count();
+    int32_t previousLink2Count = encoderGetLink2Count();
+
+    while (1) {
+        int32_t currentLink1Count = encoderGetLink1Count();
+        int32_t currentLink2Count = encoderGetLink2Count();
+
+        if ((currentLink1Count != previousLink1Count) ||
+            (currentLink2Count != previousLink2Count)) {
+            printf("Link 1: %ld counts, %.2f degrees | Link 2: %ld counts, %.2f degrees\n",
+                   (long)currentLink1Count,
+                   getAngleFromCount(currentLink1Count),
+                   (long)currentLink2Count,
+                   getAngleFromCount(currentLink2Count));
+            previousLink1Count = currentLink1Count;
+            previousLink2Count = currentLink2Count;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }

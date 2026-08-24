@@ -8,7 +8,7 @@
 #
 # Author: Dain Kim
 # Date Created: 2026-07-15
-# Last Modified: 2026-08-13
+# Last Modified: 2026-08-24
 # -----------------------------------------------------------------------------*/
 
 #include <stdlib.h>
@@ -29,15 +29,8 @@
 #include "voltageReader.h"
 
 
-/*|Macro|--------------------------------------------------------------------*/
-
-#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
-
-
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
-static void encoderPrintTask(void *arg);
-static float getAngleFromCount(int32_t encoderCount);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
@@ -54,7 +47,6 @@ void app_main(void)
     voltageReaderInit();
 
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
-    xTaskCreate(encoderPrintTask, "encoderPrintTask", 4096, NULL, 1, NULL);
 }
 
 /*|Function Definition|------------------------------------------------------*/
@@ -129,36 +121,5 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
         printf("Target angle: %.2f degrees (%ld counts)\n",
                inputDegrees,
                (long)targetCounts);
-    }
-}
-
-static float getAngleFromCount(int32_t encoderCount)
-{
-    return ((float)encoderCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
-}
-
-static void encoderPrintTask(void *arg) // Prints encoder value & Angle
-{
-    (void)arg;
-
-    int32_t previousLink1Count = encoderGetLink1Count();
-    int32_t previousLink2Count = encoderGetLink2Count();
-
-    while (1) {
-        int32_t currentLink1Count = encoderGetLink1Count();
-        int32_t currentLink2Count = encoderGetLink2Count();
-
-        if ((currentLink1Count != previousLink1Count) ||
-            (currentLink2Count != previousLink2Count)) {
-            printf("Link 1: %ld counts, %.2f degrees | Link 2: %ld counts, %.2f degrees\n",
-                   (long)currentLink1Count,
-                   getAngleFromCount(currentLink1Count),
-                   (long)currentLink2Count,
-                   getAngleFromCount(currentLink2Count));
-            previousLink1Count = currentLink1Count;
-            previousLink2Count = currentLink2Count;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
