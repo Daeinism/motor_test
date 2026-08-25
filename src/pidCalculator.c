@@ -1,15 +1,12 @@
 #include "pidCalculator.h"
 
-#define POSITION_KP 1.0f // PID-P: Proportional Gain per error
-#define POSITION_KI 12.0f // PID-I: Integral Gain per error
-#define POSITION_KD 0.2f // PID-D: Derivative
 #define POSITION_INTEGRAL_ZONE 80 // starts integrating when the error is within this range (in counts)
 #define POSITION_INTEGRAL_MAX_OUTPUT 1000.0f // maximum output from the integral term (in counts)
 #define POSITION_MIN_DUTY 600 // recommended minimum (lower than 450 may result in weak output)
-#define POSITION_MAX_DUTY 1000 
+#define POSITION_MAX_DUTY 1000 // 1023 is the max
 #define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
 
-int pidCalculatorUpdate(PidCalculatorState *state,int32_t targetCount, int32_t currentCount, float deltaTime)
+int pidCalculatorUpdate(PidCalculatorState *state, const PidCalculatorGains *gains, int32_t targetCount, int32_t currentCount, float deltaTime)
 {
     // Initializing the variables for the first time
     if (!state->calculationInitialized) {
@@ -46,11 +43,11 @@ int pidCalculatorUpdate(PidCalculatorState *state,int32_t targetCount, int32_t c
         if (positionError <= POSITION_INTEGRAL_ZONE && positionError >= -POSITION_INTEGRAL_ZONE) {
             state->integralError += positionError * deltaTime;
 
-            float integralOutput = POSITION_KI * state->integralError;
+            float integralOutput = gains->ki * state->integralError;
             if (integralOutput > POSITION_INTEGRAL_MAX_OUTPUT) {
-                state->integralError = POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                state->integralError = POSITION_INTEGRAL_MAX_OUTPUT / gains->ki;
             } else if (integralOutput < -POSITION_INTEGRAL_MAX_OUTPUT) {
-                state->integralError = -POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                state->integralError = -POSITION_INTEGRAL_MAX_OUTPUT / gains->ki;
             }
         } else {
             state->integralError = 0.0f;
@@ -58,9 +55,9 @@ int pidCalculatorUpdate(PidCalculatorState *state,int32_t targetCount, int32_t c
 
         // P D calculations
         float controlOutput =
-            (POSITION_KP * positionError) +
-            (POSITION_KI * state->integralError) -
-            (POSITION_KD * encoderVelocity);
+            (gains->kp * positionError) +
+            (gains->ki * state->integralError) -
+            (gains->kd * encoderVelocity);
 
         bool outputMovesTowardTarget = // Deciding whether or not need to move the motor
             (positionError > 0 && controlOutput > 0.0f) ||

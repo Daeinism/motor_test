@@ -3,5 +3,6 @@
 
 void voltageReaderInit(void);
 float voltageReaderRead(void);
+void voltageReaderPrintStatus(void);
 
 #endif

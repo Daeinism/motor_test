@@ -12,8 +12,15 @@ typedef struct {
     float integralError;
 } PidCalculatorState;
 
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+} PidCalculatorGains;
+
 int pidCalculatorUpdate(
     PidCalculatorState *state,
+    const PidCalculatorGains *gains,
     int32_t targetCount,
     int32_t currentCount,
     float deltaTime

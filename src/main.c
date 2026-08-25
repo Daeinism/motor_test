@@ -96,6 +96,12 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
+        /*------------------------|Battery Command|-------------------------------*/
+        if (strncmp(inputBuffer, "battery", 7) == 0) {
+            voltageReaderPrintStatus();
+            continue;
+        }
+
         if (!motorIsControlEnabled()) {
             printf("Position control is released. Type hold first.\n");
             continue;

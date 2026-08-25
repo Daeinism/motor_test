@@ -8,9 +8,6 @@
 #include "esp_adc/adc_oneshot.h" // “One-shot” means the ADC takes one measurement whenever the program asks for one.
 #include "esp_err.h" // ESP Error Handling Library
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 #define VOLTAGE_READER_ADC_UNIT ADC_UNIT_2
 #define VOLTAGE_READER_ADC_CHANNEL ADC_CHANNEL_2 // On the ESP32-S3, GPIO 13 is connected to ADC2 channel 2.
 #define VOLTAGE_DIVIDER_RATIO 5.0f
@@ -20,7 +17,6 @@
     
 static adc_oneshot_unit_handle_t voltageReaderAdcHandle = NULL; // Handle for the ADC unit used for voltage reading
 static adc_cali_handle_t voltageReaderCalibrationHandle = NULL;
-static void voltageReaderTask(void *arg);
 static float voltageReaderGetPercentage(float batteryVoltage);
 
 void voltageReaderInit(void)
@@ -61,9 +57,6 @@ void voltageReaderInit(void)
         &voltageReaderCalibrationHandle // this is not an actual read value. It's the calibraion ratio
     ));
 
-    // ------------------------- Create Voltage Reader Task -----------------------
-    xTaskCreate(voltageReaderTask, "voltageReaderTask", 4096, NULL, 1, NULL);
-
 }
 float voltageReaderRead(void)
 {
@@ -101,24 +94,18 @@ static float voltageReaderGetPercentage(float batteryVoltage)
     return percentage;
 }
 
-static void voltageReaderTask(void *arg)
+void voltageReaderPrintStatus(void)
 {
-    (void)arg;
+    float batteryVoltage = voltageReaderRead();
+    float batteryPercentage = voltageReaderGetPercentage(batteryVoltage);
 
-    while (1) {
-        float batteryVoltage = voltageReaderRead();
-        float batteryPercentage = voltageReaderGetPercentage(batteryVoltage);
-
-        if (batteryVoltage <= BATTERY_CUTOFF_VOLTAGE) {
-            printf("Battery CUTOFF: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
-        }
-        else if (batteryVoltage <= BATTERY_WARNING_VOLTAGE) {
-            printf("Battery LOW: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
-        }
-        else {
-            printf("Battery: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10000));
+    if (batteryVoltage <= BATTERY_CUTOFF_VOLTAGE) {
+        printf("Battery CUTOFF: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
+    }
+    else if (batteryVoltage <= BATTERY_WARNING_VOLTAGE) {
+        printf("Battery LOW: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
+    }
+    else {
+        printf("Battery: %.0f%% (%.2f V)\n", batteryPercentage, batteryVoltage);
     }
 }

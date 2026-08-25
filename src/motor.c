@@ -18,6 +18,14 @@
 
 #define MOTOR_MAX_DUTY 1023
 
+#define MOTOR1_POSITION_KP 1.0f // PID-P: Proportional Gain per error
+#define MOTOR1_POSITION_KI 7.0f // PID-I: Integral Gain per error
+#define MOTOR1_POSITION_KD 0.2f // PID-D: Derivative
+
+#define MOTOR2_POSITION_KP 1.0f
+#define MOTOR2_POSITION_KI 0.0f
+#define MOTOR2_POSITION_KD 0.2f
+
 
 // static = makes the variable private for the lifetime of the program
 // volatile = "value can change unexpectedly, so it must always read it from memory, not cache it."
@@ -33,6 +41,16 @@ static MotorEncoderCountReader readLink1EncoderCount = NULL;
 static MotorEncoderCountReader readLink2EncoderCount = NULL;
 static PidCalculatorState link1PidState = {0};
 static PidCalculatorState link2PidState = {0};
+static const PidCalculatorGains link1PidGains = {
+    .kp = MOTOR1_POSITION_KP,
+    .ki = MOTOR1_POSITION_KI,
+    .kd = MOTOR1_POSITION_KD
+};
+static const PidCalculatorGains link2PidGains = {
+    .kp = MOTOR2_POSITION_KP,
+    .ki = MOTOR2_POSITION_KI,
+    .kd = MOTOR2_POSITION_KD
+};
 
 void motorInit(MotorEncoderCountReader link1EncoderCountReader, MotorEncoderCountReader link2EncoderCountReader)
 {
@@ -172,12 +190,14 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
         if (controlEnabled) {
             requestedLink1Duty = pidCalculatorUpdate(
                 &link1PidState,
+                &link1PidGains,
                 link1TargetCount,
                 currentLink1Count,
                 0.02f
             );
             requestedLink2Duty = pidCalculatorUpdate(
                 &link2PidState,
+                &link2PidGains,
                 link2TargetCount,
                 currentLink2Count,
                 0.02f
