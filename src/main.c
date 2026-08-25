@@ -31,6 +31,7 @@
 
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
+static int32_t degreesToEncoderCount(float inputDegrees);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
@@ -41,7 +42,7 @@ void app_main(void)
 {
     statusLedInit();
     encoderInit();
-    motorInit(encoderGetLink1Count);
+    motorInit(encoderGetLink1Count, encoderGetLink2Count);
     limitSwitchInit(motorEmergencyStop);
         // motorEmergencyStop is just a function pointer, not a function call.
     voltageReaderInit();
@@ -55,9 +56,10 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     (void)arg; // Telling compiler "Don't need argument for this particular task, so don't ask"
 
     char inputBuffer[32];
-    float inputDegrees;
+    float link1InputDegrees;
+    float link2InputDegrees;
 
-    printf("Enter target angle from home in degrees, or type home/release/hold:\n");
+    printf("Enter Link 1 and Link 2 angles separated by a space, or type home/release/hold:\n");
 
     while (1) {
         if (fgets(inputBuffer, sizeof(inputBuffer), stdin) == NULL) {
@@ -69,7 +71,8 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
         if (strncmp(inputBuffer, "home", 4) == 0) {
             encoderResetLink1Count();
             encoderResetLink2Count();
-            motorSetTargetCount(0);
+            motorSetLink1TargetCount(0);
+            motorSetLink2TargetCount(0);
             printf("Current position set as home: 0.00 degrees\n");
             continue;
         }
@@ -98,28 +101,42 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        inputDegrees = strtof(inputBuffer, NULL); // save degrees in float
- 
-        /*-------------------------|Angle to Target Count|----------------------------*/
-        // Getting the targetCounts(float) value from the input degree
-        float targetCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
-         
-        // Round the float value to the nearest integer.
-        int32_t targetCounts;
-
-        // adding 0.5 or -0.5 before truncating into int for rounding
-        if (targetCountsFloat >= 0.0f) { 
-            targetCounts = (int32_t)(targetCountsFloat + 0.5f);
-        } 
-        else {
-            targetCounts = (int32_t)(targetCountsFloat - 0.5f);
+        if (sscanf(inputBuffer, "%f %f", &link1InputDegrees, &link2InputDegrees) != 2) {
+            printf("Invalid input. Enter two angles, for example: -20 40\n");
+            continue;
         }
 
-        // Setting the targetcount based on home
-        motorSetTargetCount(targetCounts);
+        int32_t link1TargetCounts = degreesToEncoderCount(link1InputDegrees);
+        int32_t link2TargetCounts = degreesToEncoderCount(link2InputDegrees);
 
-        printf("Target angle: %.2f degrees (%ld counts)\n",
-               inputDegrees,
-               (long)targetCounts);
+        // Setting the targetcount based on home
+        motorSetLink1TargetCount(link1TargetCounts);
+        motorSetLink2TargetCount(link2TargetCounts);
+
+        printf("Link 1 target: %.2f degrees (%ld counts) | Link 2 target: %.2f degrees (%ld counts)\n",
+               link1InputDegrees,
+               (long)link1TargetCounts,
+               link2InputDegrees,
+               (long)link2TargetCounts);
     }
+}
+
+static int32_t degreesToEncoderCount(float inputDegrees)
+{
+    /*-------------------------|Angle to Target Count|----------------------------*/
+    // Getting the targetCounts(float) value from the input degree
+    float targetCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
+
+    // Round the float value to the nearest integer.
+    int32_t targetCounts;
+
+    // adding 0.5 or -0.5 before truncating into int for rounding
+    if (targetCountsFloat >= 0.0f) {
+        targetCounts = (int32_t)(targetCountsFloat + 0.5f);
+    }
+    else {
+        targetCounts = (int32_t)(targetCountsFloat - 0.5f);
+    }
+
+    return targetCounts;
 }

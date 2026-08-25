@@ -1,7 +1,5 @@
 #include "pidCalculator.h"
 
-#include <stdbool.h>
-
 #define POSITION_KP 1.0f // PID-P: Proportional Gain per error
 #define POSITION_KI 12.0f // PID-I: Integral Gain per error
 #define POSITION_KD 0.2f // PID-D: Derivative
@@ -11,21 +9,15 @@
 #define POSITION_MAX_DUTY 1000 
 #define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
 
-static bool calculationInitialized = false;
-static int32_t previousCountForDerivative = 0;
-static int32_t previousTargetCount = 0;
-static int32_t previousPositionError = 0;
-static float integralError = 0.0f;
-
-int pidCalculatorUpdate(int32_t targetCount, int32_t currentCount, float deltaTime)
+int pidCalculatorUpdate(PidCalculatorState *state,int32_t targetCount, int32_t currentCount, float deltaTime)
 {
-    // 1. Initializing the variables for the first time
-    if (!calculationInitialized) {
-        previousCountForDerivative = currentCount;
-        previousTargetCount = targetCount;
-        previousPositionError = 0;
-        integralError = 0.0f;
-        calculationInitialized = true;
+    // Initializing the variables for the first time
+    if (!state->calculationInitialized) {
+        state->previousCountForDerivative = currentCount;
+        state->previousTargetCount = targetCount;
+        state->previousPositionError = 0;
+        state->integralError = 0.0f;
+        state->calculationInitialized = true;
     }
 
     int32_t positionError = targetCount - currentCount; // Get the positionError for later calculation
@@ -34,40 +26,40 @@ int pidCalculatorUpdate(int32_t targetCount, int32_t currentCount, float deltaTi
 
     // 1. Calculating the encoder velocity (derivative)
     if (deltaTime > 0.0f) { //deltaTime = 0.02f (20ms) from motorTask
-        encoderVelocity = (currentCount - previousCountForDerivative) / deltaTime;
+        encoderVelocity = (currentCount - state->previousCountForDerivative) / deltaTime;
     }
 
-    previousCountForDerivative = currentCount;
+    state->previousCountForDerivative = currentCount;
 
-    if (targetCount != previousTargetCount ||
-        (positionError > 0 && previousPositionError < 0) ||
-        (positionError < 0 && previousPositionError > 0)) {
-        integralError = 0.0f;
+    if (targetCount != state->previousTargetCount ||
+        (positionError > 0 && state->previousPositionError < 0) ||
+        (positionError < 0 && state->previousPositionError > 0)) {
+        state->integralError = 0.0f;
     }
 
-    previousTargetCount = targetCount;
-    previousPositionError = positionError;
+    state->previousTargetCount = targetCount;
+    state->previousPositionError = positionError;
 
     // 2. Determining the move direction & PID Control Logics
     if (positionError > POSITION_TOLERANCE || positionError < -POSITION_TOLERANCE)
     {
         if (positionError <= POSITION_INTEGRAL_ZONE && positionError >= -POSITION_INTEGRAL_ZONE) {
-            integralError += positionError * deltaTime;
+            state->integralError += positionError * deltaTime;
 
-            float integralOutput = POSITION_KI * integralError;
+            float integralOutput = POSITION_KI * state->integralError;
             if (integralOutput > POSITION_INTEGRAL_MAX_OUTPUT) {
-                integralError = POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                state->integralError = POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
             } else if (integralOutput < -POSITION_INTEGRAL_MAX_OUTPUT) {
-                integralError = -POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
+                state->integralError = -POSITION_INTEGRAL_MAX_OUTPUT / POSITION_KI;
             }
         } else {
-            integralError = 0.0f;
+            state->integralError = 0.0f;
         }
 
         // P D calculations
         float controlOutput =
             (POSITION_KP * positionError) +
-            (POSITION_KI * integralError) -
+            (POSITION_KI * state->integralError) -
             (POSITION_KD * encoderVelocity);
 
         bool outputMovesTowardTarget = // Deciding whether or not need to move the motor
@@ -99,18 +91,18 @@ int pidCalculatorUpdate(int32_t targetCount, int32_t currentCount, float deltaTi
             }
         }
     } else {
-        integralError = 0.0f;
+        state->integralError = 0.0f;
     }
 
     return requestedDuty;
 }
 
-void pidCalculatorReset(void) // clears the PID calculator's internal memory
+void pidCalculatorReset(PidCalculatorState *state) // clears the PID calculator's internal memory
 {
     // this reset is necessary because the PID-I term can accumulate over time and cause overshoot or oscillation
-    calculationInitialized = false;
-    previousCountForDerivative = 0;
-    previousTargetCount = 0;
-    previousPositionError = 0;
-    integralError = 0.0f;
+    state->calculationInitialized = false;
+    state->previousCountForDerivative = 0;
+    state->previousTargetCount = 0;
+    state->previousPositionError = 0;
+    state->integralError = 0.0f;
 }

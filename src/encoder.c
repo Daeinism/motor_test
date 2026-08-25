@@ -139,7 +139,6 @@ static float getAngleFromCount(int32_t encoderCount)
 {
     return ((float)encoderCount * 360.0f) / ENCODER_COUNTS_PER_REVOLUTION;
 }
-
 static void encoderPrintTask(void *arg) // Prints encoder value & Angle
 {
     (void)arg;

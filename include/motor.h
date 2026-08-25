@@ -6,8 +6,12 @@
 
 typedef int32_t (*MotorEncoderCountReader)(void);
 
-void motorInit(MotorEncoderCountReader encoderCountReader);
-void motorSetTargetCount(int32_t targetCount);
+void motorInit(
+    MotorEncoderCountReader link1EncoderCountReader,
+    MotorEncoderCountReader link2EncoderCountReader
+);
+void motorSetLink1TargetCount(int32_t targetCount);
+void motorSetLink2TargetCount(int32_t targetCount);
 void motorHold(void);
 void motorRelease(void);
 void motorEmergencyStop(void);

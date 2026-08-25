@@ -26,27 +26,41 @@ static void motorTask(void *arg);
 static void setMotorDuty(ledc_channel_t in1Channel, ledc_channel_t in2Channel, int signedDuty);
 static void setAllMotorDuty(int signedDuty);
 
-static volatile int32_t targetEncoderCount = 0;
+static volatile int32_t link1TargetEncoderCount = 0;
+static volatile int32_t link2TargetEncoderCount = 0;
 static volatile bool positionControlEnabled = true; // for lock or release
-static MotorEncoderCountReader readEncoderCount = NULL;
+static MotorEncoderCountReader readLink1EncoderCount = NULL;
+static MotorEncoderCountReader readLink2EncoderCount = NULL;
+static PidCalculatorState link1PidState = {0};
+static PidCalculatorState link2PidState = {0};
 
-void motorInit(MotorEncoderCountReader encoderCountReader)
+void motorInit(MotorEncoderCountReader link1EncoderCountReader, MotorEncoderCountReader link2EncoderCountReader)
 {
-    readEncoderCount = encoderCountReader;
-    pidCalculatorReset();
+    readLink1EncoderCount = link1EncoderCountReader;
+    readLink2EncoderCount = link2EncoderCountReader;
+    pidCalculatorReset(&link1PidState);
+    pidCalculatorReset(&link2PidState);
     motorPwmInit();
     xTaskCreate(motorTask, "motorTask", 2048, NULL, 1, NULL);
 }
 
-void motorSetTargetCount(int32_t targetCount)
+void motorSetLink1TargetCount(int32_t targetCount)
 {
-    targetEncoderCount = targetCount; // targetCount comes from main.userInputTask (user input degrees → targetCounts)
+    link1TargetEncoderCount = targetCount; // targetCount comes from main.userInputTask (user input degrees → targetCounts)
+}
+
+void motorSetLink2TargetCount(int32_t targetCount)
+{
+    link2TargetEncoderCount = targetCount;
 }
 
 void motorHold(void) // used by main.userInputTask
 {
-    if (readEncoderCount != NULL) {
-        targetEncoderCount = readEncoderCount();
+    if (readLink1EncoderCount != NULL) {
+        link1TargetEncoderCount = readLink1EncoderCount();
+    }
+    if (readLink2EncoderCount != NULL) {
+        link2TargetEncoderCount = readLink2EncoderCount();
     }
 
     positionControlEnabled = true;
@@ -56,8 +70,11 @@ void motorRelease(void) // used by main.userInputTask
 {
     positionControlEnabled = false;
 
-    if (readEncoderCount != NULL) {
-        targetEncoderCount = readEncoderCount(); // set current position as target position when releasing the motor
+    if (readLink1EncoderCount != NULL) {
+        link1TargetEncoderCount = readLink1EncoderCount(); // set current position as target position when releasing the motor
+    }
+    if (readLink2EncoderCount != NULL) {
+        link2TargetEncoderCount = readLink2EncoderCount();
     }
 }
 
@@ -65,8 +82,11 @@ void motorEmergencyStop(void) // registered as the limit switch pressed handler
 {
     positionControlEnabled = false;
 
-    if (readEncoderCount != NULL) {
-        targetEncoderCount = readEncoderCount();
+    if (readLink1EncoderCount != NULL) {
+        link1TargetEncoderCount = readLink1EncoderCount();
+    }
+    if (readLink2EncoderCount != NULL) {
+        link2TargetEncoderCount = readLink2EncoderCount();
     }
 
     setAllMotorDuty(0);
@@ -136,36 +156,66 @@ static void motorTask(void *arg) // Processing Target & Error and tossing Reques
 {
     (void)arg; // telling compiler "Yes, we are not using the arguments. Stop asking."
 
-    int previousDuty = 1;
+    int previousLink1Duty = 1;
+    int previousLink2Duty = 1;
 
     while (1) {
         // 1. Setting up the variables 
-        int32_t currentCount = readEncoderCount(); // Snapshot the target value from encoderISR
-        int32_t targetCount = targetEncoderCount; // Snapshot the target value from userInputTask
-        int requestedDuty = 0; // Initializing the request value to 0 first.
+        int32_t currentLink1Count = readLink1EncoderCount(); // Snapshot the target value from encoderISR
+        int32_t currentLink2Count = readLink2EncoderCount();
+        int32_t link1TargetCount = link1TargetEncoderCount; // Snapshot the target value from userInputTask
+        int32_t link2TargetCount = link2TargetEncoderCount;
+        int requestedLink1Duty = 0; // Initializing the request value to 0 first.
+        int requestedLink2Duty = 0;
         bool controlEnabled = positionControlEnabled; // Updated by userInputTask
 
         if (controlEnabled) {
-            requestedDuty = pidCalculatorUpdate(targetCount, currentCount, 0.02f);
+            requestedLink1Duty = pidCalculatorUpdate(
+                &link1PidState,
+                link1TargetCount,
+                currentLink1Count,
+                0.02f
+            );
+            requestedLink2Duty = pidCalculatorUpdate(
+                &link2PidState,
+                link2TargetCount,
+                currentLink2Count,
+                0.02f
+            );
                 // 0.02f = 20ms, the time interval between each motorTask loop
         } else {
-            pidCalculatorReset();
+            pidCalculatorReset(&link1PidState);
+            pidCalculatorReset(&link2PidState);
         }
 
-        if (requestedDuty != previousDuty) {
+        bool link1DirectionChanged =
+            (requestedLink1Duty > 0 && previousLink1Duty < 0) ||
+            (requestedLink1Duty < 0 && previousLink1Duty > 0);
+        bool link2DirectionChanged =
+            (requestedLink2Duty > 0 && previousLink2Duty < 0) ||
+            (requestedLink2Duty < 0 && previousLink2Duty > 0);
 
-            // Brief stopping mechanism when changing direction to prevent overshoot and oscillation
-            bool directionChanged = (requestedDuty > 0 && previousDuty < 0) || (requestedDuty < 0 && previousDuty > 0);
+        // Brief stopping mechanism when changing direction to prevent overshoot and oscillation
+        if (requestedLink1Duty != previousLink1Duty && link1DirectionChanged) {
+            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, 0);
+        }
+        if (requestedLink2Duty != previousLink2Duty && link2DirectionChanged) {
+            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, 0);
+        }
+
+        if (link1DirectionChanged || link2DirectionChanged) {
                 // if either condition is met, then it means the direction has changed
+            vTaskDelay(pdMS_TO_TICKS(10)); // If direction is changed, Stop briefly before changing speed or direction.
+        }
 
-            if (directionChanged) { // If direction is changed, Stop briefly before changing speed or direction. 
-                setAllMotorDuty(0);
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-
-            // And then start moving again with new duty
-            setAllMotorDuty(requestedDuty);
-            previousDuty = requestedDuty;
+        // And then start moving again with new duty
+        if (requestedLink1Duty != previousLink1Duty) {
+            setMotorDuty(LEDC_CHANNEL_0, LEDC_CHANNEL_1, requestedLink1Duty);
+            previousLink1Duty = requestedLink1Duty;
+        }
+        if (requestedLink2Duty != previousLink2Duty) {
+            setMotorDuty(LEDC_CHANNEL_2, LEDC_CHANNEL_3, requestedLink2Duty);
+            previousLink2Duty = requestedLink2Duty;
         }
 
         vTaskDelay(pdMS_TO_TICKS(20)); // Refresh this duty cycle every 20ms
