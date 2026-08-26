@@ -10,10 +10,10 @@
 
 #define VOLTAGE_READER_ADC_UNIT ADC_UNIT_2
 #define VOLTAGE_READER_ADC_CHANNEL ADC_CHANNEL_2 // On the ESP32-S3, GPIO 13 is connected to ADC2 channel 2.
-#define VOLTAGE_DIVIDER_RATIO 5.0f
-#define BATTERY_FULL_VOLTAGE 12.6f
-#define BATTERY_WARNING_VOLTAGE 11.1f
-#define BATTERY_CUTOFF_VOLTAGE 10.5f
+#define VOLTAGE_DIVIDER_RATIO 4.96f // this is for calibration
+#define BATTERY_FULL_VOLTAGE 12.1f // LittoKala Battery Full Voltage for 3S LiPo is 12.1V
+#define BATTERY_WARNING_VOLTAGE 10.5f
+#define BATTERY_CUTOFF_VOLTAGE 9.6f // 7.5V is the absolute minimum voltage for a 3S LiPo battery
     
 static adc_oneshot_unit_handle_t voltageReaderAdcHandle = NULL; // Handle for the ADC unit used for voltage reading
 static adc_cali_handle_t voltageReaderCalibrationHandle = NULL;
