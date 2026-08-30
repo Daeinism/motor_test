@@ -11,20 +11,24 @@
 
 #include "pidCalculator.h"
 
-#define MOTOR1_IN1 GPIO_NUM_1
-#define MOTOR1_IN2 GPIO_NUM_2
+#define MOTOR1_IN1 GPIO_NUM_2
+#define MOTOR1_IN2 GPIO_NUM_1
 #define MOTOR2_IN1 GPIO_NUM_41
 #define MOTOR2_IN2 GPIO_NUM_42
 
 #define MOTOR_MAX_DUTY 1023
 
 #define MOTOR1_POSITION_KP 1.0f // PID-P: Proportional Gain per error
-#define MOTOR1_POSITION_KI 7.0f // PID-I: Integral Gain per error
-#define MOTOR1_POSITION_KD 0.2f // PID-D: Derivative
+#define MOTOR1_POSITION_KI 0.4f // PID-I: Integral Gain per error
+#define MOTOR1_POSITION_KD 0.1f // PID-D: Derivative
+#define MOTOR1_POSITION_MIN_DUTY 350 // recommended minimum (lower than 450 may result in weak output)
+#define MOTOR1_POSITION_MAX_DUTY 1000 // 1023 is the max
 
 #define MOTOR2_POSITION_KP 1.0f
-#define MOTOR2_POSITION_KI 0.0f
-#define MOTOR2_POSITION_KD 0.2f
+#define MOTOR2_POSITION_KI 0.4f
+#define MOTOR2_POSITION_KD 0.1f
+#define MOTOR2_POSITION_MIN_DUTY 300
+#define MOTOR2_POSITION_MAX_DUTY 1000
 
 
 // static = makes the variable private for the lifetime of the program
@@ -44,12 +48,16 @@ static PidCalculatorState link2PidState = {0};
 static const PidCalculatorGains link1PidGains = {
     .kp = MOTOR1_POSITION_KP,
     .ki = MOTOR1_POSITION_KI,
-    .kd = MOTOR1_POSITION_KD
+    .kd = MOTOR1_POSITION_KD,
+    .minDuty = MOTOR1_POSITION_MIN_DUTY,
+    .maxDuty = MOTOR1_POSITION_MAX_DUTY
 };
 static const PidCalculatorGains link2PidGains = {
     .kp = MOTOR2_POSITION_KP,
     .ki = MOTOR2_POSITION_KI,
-    .kd = MOTOR2_POSITION_KD
+    .kd = MOTOR2_POSITION_KD,
+    .minDuty = MOTOR2_POSITION_MIN_DUTY,
+    .maxDuty = MOTOR2_POSITION_MAX_DUTY
 };
 
 void motorInit(MotorEncoderCountReader link1EncoderCountReader, MotorEncoderCountReader link2EncoderCountReader)

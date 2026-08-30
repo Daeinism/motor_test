@@ -2,9 +2,7 @@
 
 #define POSITION_INTEGRAL_ZONE 80 // starts integrating when the error is within this range (in counts)
 #define POSITION_INTEGRAL_MAX_OUTPUT 1000.0f // maximum output from the integral term (in counts)
-#define POSITION_MIN_DUTY 600 // recommended minimum (lower than 450 may result in weak output)
-#define POSITION_MAX_DUTY 1000 // 1023 is the max
-#define POSITION_TOLERANCE 3 // Ex) Tolerance 3 × 360 / 1320 ≈ ±0.82° permitted
+#define POSITION_TOLERANCE 15 // Ex) Tolerance 15 × 360 / 7360 ≈ ± 0.73 degrees (for 7360 counts per revolution)
 
 int pidCalculatorUpdate(PidCalculatorState *state, const PidCalculatorGains *gains, int32_t targetCount, int32_t currentCount, float deltaTime)
 {
@@ -74,10 +72,10 @@ int pidCalculatorUpdate(PidCalculatorState *state, const PidCalculatorGains *gai
             }
 
             // Adjusting the value within the MIN & MAX duty value range
-            if (dutyMagnitude < POSITION_MIN_DUTY) { 
-                dutyMagnitude = POSITION_MIN_DUTY;
-            } else if (dutyMagnitude > POSITION_MAX_DUTY) {
-                dutyMagnitude = POSITION_MAX_DUTY;
+            if (dutyMagnitude < gains->minDuty) {
+                dutyMagnitude = gains->minDuty;
+            } else if (dutyMagnitude > gains->maxDuty) {
+                dutyMagnitude = gains->maxDuty;
             }
 
             // applying the direction of requestedDuty based on position Error

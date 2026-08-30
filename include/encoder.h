@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 
-#define ENCODER_COUNTS_PER_REVOLUTION 1320 //Full Quadrature  Reading (Bottom Motor: 1320 )
+#define ENCODER_COUNTS_PER_REVOLUTION 7360 //Full Quadrature  Reading (Bottom Motor: 7360 )
+    // 60RPM motor is 169:1 gear ratio
+    // 333RPM motor is 30:1 gear ratio
 
 void encoderInit(void);
 int32_t encoderGetLink1Count(void);

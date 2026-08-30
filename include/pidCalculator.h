@@ -16,6 +16,8 @@ typedef struct {
     float kp;
     float ki;
     float kd;
+    int minDuty;
+    int maxDuty;
 } PidCalculatorGains;
 
 int pidCalculatorUpdate(
