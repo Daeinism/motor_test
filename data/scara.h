@@ -25,10 +25,10 @@
 #define MAX_STRING            256         // for the commandString array size
 #define LEFT_ARM_SOLUTION     1           // index that can be used to indicate left arm
 #define RIGHT_ARM_SOLUTION    0           // index that can be used to indicate right arm
-#define L1                    350.0       // inner arm length
-#define L2                    250.0       // outer arm length
-#define MAX_ABS_THETA1_DEG    150.0       // max angle of inner arm
-#define MAX_ABS_THETA2_DEG    170.0       // max angle of outer arm relative to inner arm
+#define L1                    142.0       // inner arm length
+#define L2                    130.0       // outer arm length
+#define MAX_ABS_THETA1_DEG    80.0        // max angle of inner arm
+#define MAX_ABS_THETA2_DEG    120.0       // max angle of outer arm relative to inner arm
 #define SLOPE_TOL             (1.0e-5)    // for pen color based on slope
 #define POINT_TOL             (1.0e-8)    // use to check if previous line end point is
                                           // the same as current line start point

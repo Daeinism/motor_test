@@ -29,6 +29,10 @@
 #include "voltageReader.h"
 
 #define MOTOR_MOVE_TIMEOUT_MS 15000 // 15 seconds
+#define LINK1_MIN_TARGET_DEGREES -80.0f
+#define LINK1_MAX_TARGET_DEGREES 80.0f
+#define LINK2_MIN_TARGET_DEGREES -120.0f
+#define LINK2_MAX_TARGET_DEGREES 120.0f
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -112,6 +116,22 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
 
         if (sscanf(inputBuffer, "%f %f", &link1InputDegrees, &link2InputDegrees) != 2) {
             printf("Invalid input. Enter two angles, for example: -20 40\n");
+            continue;
+        }
+
+        if (link1InputDegrees < LINK1_MIN_TARGET_DEGREES ||
+            link1InputDegrees > LINK1_MAX_TARGET_DEGREES) {
+            printf("Invalid Link 1 target. Enter an angle from %.0f to %.0f degrees.\n",
+                   LINK1_MIN_TARGET_DEGREES,
+                   LINK1_MAX_TARGET_DEGREES);
+            continue;
+        }
+
+        if (link2InputDegrees < LINK2_MIN_TARGET_DEGREES ||
+            link2InputDegrees > LINK2_MAX_TARGET_DEGREES) {
+            printf("Invalid Link 2 target. Enter an angle from %.0f to %.0f degrees.\n",
+                   LINK2_MIN_TARGET_DEGREES,
+                   LINK2_MAX_TARGET_DEGREES);
             continue;
         }
 
