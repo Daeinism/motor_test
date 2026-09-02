@@ -32,6 +32,7 @@
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
 static int32_t degreesToEncoderCount(float inputDegrees);
+static void setScaraTargetAngles(float theta1Degrees, float theta2Degrees);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
@@ -112,19 +113,29 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        int32_t link1TargetCounts = degreesToEncoderCount(link1InputDegrees);
-        int32_t link2TargetCounts = degreesToEncoderCount(link2InputDegrees);
-
-        // Setting the targetcount based on home
-        motorSetLink1TargetCount(link1TargetCounts);
-        motorSetLink2TargetCount(link2TargetCounts);
-
-        printf("Link 1 target: %.2f degrees (%ld counts) | Link 2 target: %.2f degrees (%ld counts)\n",
-               link1InputDegrees,
-               (long)link1TargetCounts,
-               link2InputDegrees,
-               (long)link2TargetCounts);
+        setScaraTargetAngles(link1InputDegrees, link2InputDegrees);
     }
+}
+
+static void setScaraTargetAngles(float theta1Degrees, float theta2Degrees)
+{
+    float link1PhysicalDegrees = theta1Degrees;
+    float link2PhysicalDegrees = theta1Degrees + theta2Degrees;
+
+    int32_t link1TargetCounts = degreesToEncoderCount(link1PhysicalDegrees);
+    int32_t link2TargetCounts = degreesToEncoderCount(link2PhysicalDegrees);
+
+    // Setting the targetcount based on home
+    motorSetLink1TargetCount(link1TargetCounts);
+    motorSetLink2TargetCount(link2TargetCounts);
+
+    printf("SCARA target: theta1 %.2f degrees, theta2 %.2f degrees | Physical Link 1: %.2f degrees (%ld counts) | Physical Link 2: %.2f degrees (%ld counts)\n",
+           theta1Degrees,
+           theta2Degrees,
+           link1PhysicalDegrees,
+           (long)link1TargetCounts,
+           link2PhysicalDegrees,
+           (long)link2TargetCounts);
 }
 
 static int32_t degreesToEncoderCount(float inputDegrees)
