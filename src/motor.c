@@ -18,11 +18,11 @@
 
 #define MOTOR_MAX_DUTY 1023
 
-#define MOTOR1_POSITION_KP 0.8f // PID-P: Proportional Gain per error
-#define MOTOR1_POSITION_KI 0.4f // PID-I: Integral Gain per error
-#define MOTOR1_POSITION_KD 0.1f // PID-D: Derivative
+#define MOTOR1_POSITION_KP 0.85f // PID-P: Proportional Gain per error
+#define MOTOR1_POSITION_KI 0.7f // PID-I: Integral Gain per error
+#define MOTOR1_POSITION_KD 0.10f // PID-D: Derivative
 #define MOTOR1_POSITION_MIN_DUTY 400 // recommended minimum (lower than 450 may result in weak output)
-#define MOTOR1_POSITION_MAX_DUTY 800 // 1023 is the max
+#define MOTOR1_POSITION_MAX_DUTY 1000 // 1023 is the max
 
 #define MOTOR2_POSITION_KP 1.0f
 #define MOTOR2_POSITION_KI 0.4f
