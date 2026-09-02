@@ -28,6 +28,8 @@
 #include "statusLed.h"
 #include "voltageReader.h"
 
+#define MOTOR_MOVE_TIMEOUT_MS 15000 // 15 seconds
+
 
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
@@ -136,6 +138,12 @@ static void setScaraTargetAngles(float theta1Degrees, float theta2Degrees)
            (long)link1TargetCounts,
            link2PhysicalDegrees,
            (long)link2TargetCounts);
+
+    if (motorWaitUntilTargetReached(MOTOR_MOVE_TIMEOUT_MS)) {
+        printf("Movement complete\n");
+    } else {
+        printf("Movement did not complete: control was released, the target changed, or the movement timed out\n");
+    }
 }
 
 static int32_t degreesToEncoderCount(float inputDegrees)

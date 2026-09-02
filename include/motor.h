@@ -12,6 +12,7 @@ void motorInit(
 );
 void motorSetLink1TargetCount(int32_t targetCount);
 void motorSetLink2TargetCount(int32_t targetCount);
+bool motorWaitUntilTargetReached(uint32_t timeoutMs);
 void motorHold(void);
 void motorRelease(void);
 void motorEmergencyStop(void);

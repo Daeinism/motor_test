@@ -17,6 +17,9 @@
 #define MOTOR2_IN2 GPIO_NUM_42
 
 #define MOTOR_MAX_DUTY 1023
+#define MOTOR_TARGET_TOLERANCE_COUNTS 20
+#define MOTOR_TARGET_SETTLE_TIME_MS 200
+#define MOTOR_TARGET_CHECK_INTERVAL_MS 20
 
 #define MOTOR1_POSITION_KP 0.85f // PID-P: Proportional Gain per error
 #define MOTOR1_POSITION_KI 0.7f // PID-I: Integral Gain per error
@@ -78,6 +81,50 @@ void motorSetLink1TargetCount(int32_t targetCount)
 void motorSetLink2TargetCount(int32_t targetCount)
 {
     link2TargetEncoderCount = targetCount;
+}
+
+bool motorWaitUntilTargetReached(uint32_t timeoutMs)
+{
+    if (readLink1EncoderCount == NULL || readLink2EncoderCount == NULL) {
+        return false;
+    }
+
+    uint32_t elapsedTimeMs = 0;
+    uint32_t settledTimeMs = 0;
+    int32_t awaitedLink1TargetCount = link1TargetEncoderCount;
+    int32_t awaitedLink2TargetCount = link2TargetEncoderCount;
+
+    while (elapsedTimeMs < timeoutMs) {
+        if (!positionControlEnabled ||
+            link1TargetEncoderCount != awaitedLink1TargetCount ||
+            link2TargetEncoderCount != awaitedLink2TargetCount) {
+            return false;
+        }
+
+        int64_t link1Error = (int64_t)awaitedLink1TargetCount - readLink1EncoderCount();
+        int64_t link2Error = (int64_t)awaitedLink2TargetCount - readLink2EncoderCount();
+
+        if (link1Error < 0) {
+            link1Error = -link1Error;
+        }
+        if (link2Error < 0) {
+            link2Error = -link2Error;
+        }
+
+        if (link1Error <= MOTOR_TARGET_TOLERANCE_COUNTS && link2Error <= MOTOR_TARGET_TOLERANCE_COUNTS) {
+            settledTimeMs += MOTOR_TARGET_CHECK_INTERVAL_MS;
+            if (settledTimeMs >= MOTOR_TARGET_SETTLE_TIME_MS) {
+                return true;
+            }
+        } else {
+            settledTimeMs = 0;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_TARGET_CHECK_INTERVAL_MS));
+        elapsedTimeMs += MOTOR_TARGET_CHECK_INTERVAL_MS;
+    }
+
+    return false;
 }
 
 void motorHold(void) // used by main.userInputTask
