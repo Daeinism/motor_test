@@ -25,6 +25,7 @@
 #include "encoder.h"
 #include "limitSwitch.h"
 #include "motor.h"
+#include "scara.h"
 #include "scaraMotion.h"
 #include "statusLed.h"
 #include "voltageReader.h"
@@ -58,6 +59,11 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     char inputBuffer[32];
     float link1InputDegrees;
     float link2InputDegrees;
+    double kinematicsInput1;
+    double kinematicsInput2;
+    double kinematicsResult1;
+    double kinematicsResult2;
+    int armSolution;
 
     printf("Enter Link 1 and Link 2 angles separated by a space, or type home/release/hold:\n");
 
@@ -102,6 +108,29 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
+        /*------------------------|Kinematics Command|-----------------------------*/
+        if (sscanf(inputBuffer, "fk %lf %lf", &kinematicsInput1, &kinematicsInput2) == 2) {
+            if (scaraFK(kinematicsInput1, kinematicsInput2, &kinematicsResult1, &kinematicsResult2) == 0) {
+                printf("FK result: X %.2f mm, Y %.2f mm\n", kinematicsResult1, kinematicsResult2);
+            } else {
+                printf("FK failed: joint angles are outside the allowed range\n");
+            }
+            continue;
+        }
+
+        /*------------------------|Inverse Kinematics Command|---------------------*/
+        if (sscanf(inputBuffer, "ik %lf %lf %d", &kinematicsInput1, &kinematicsInput2, &armSolution) == 3) {
+            if (armSolution != RIGHT_ARM_SOLUTION && armSolution != LEFT_ARM_SOLUTION) {
+                printf("IK failed: arm solution must be 0 (right) or 1 (left)\n");
+            } else if (scaraIK(kinematicsInput1, kinematicsInput2, &kinematicsResult1, &kinematicsResult2, armSolution) == 0) {
+                printf("IK result: theta1 %.2f degrees, theta2 %.2f degrees\n", kinematicsResult1, kinematicsResult2);
+            } else {
+                printf("IK failed: target is unreachable or violates joint limits\n");
+            }
+            continue;
+        }
+
+        /*------------------------|Set SCARA Angles Command|------------------------*/
         if (!motorIsControlEnabled()) {
             printf("Position control is released. Type hold first.\n");
             continue;
