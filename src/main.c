@@ -25,20 +25,13 @@
 #include "encoder.h"
 #include "limitSwitch.h"
 #include "motor.h"
+#include "scaraMotion.h"
 #include "statusLed.h"
 #include "voltageReader.h"
-
-#define MOTOR_MOVE_TIMEOUT_MS 15000 // 15 seconds
-#define LINK1_MIN_TARGET_DEGREES -80.0f
-#define LINK1_MAX_TARGET_DEGREES 80.0f
-#define LINK2_MIN_TARGET_DEGREES -120.0f
-#define LINK2_MAX_TARGET_DEGREES 120.0f
 
 
 /*|Function Prototype|-------------------------------------------------------*/
 static void userInputTask(void *arg);
-static int32_t degreesToEncoderCount(float inputDegrees);
-static void setScaraTargetAngles(float theta1Degrees, float theta2Degrees);
 
 /*|Variable Declaration|-----------------------------------------------------*/
 // static = makes the variable private for the lifetime of the program
@@ -119,69 +112,26 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        if (link1InputDegrees < LINK1_MIN_TARGET_DEGREES ||
-            link1InputDegrees > LINK1_MAX_TARGET_DEGREES) {
+        if (link1InputDegrees < SCARA_LINK1_MIN_TARGET_DEGREES ||
+            link1InputDegrees > SCARA_LINK1_MAX_TARGET_DEGREES) {
             printf("Invalid Link 1 target. Enter an angle from %.0f to %.0f degrees.\n",
-                   LINK1_MIN_TARGET_DEGREES,
-                   LINK1_MAX_TARGET_DEGREES);
+                   SCARA_LINK1_MIN_TARGET_DEGREES,
+                   SCARA_LINK1_MAX_TARGET_DEGREES);
             continue;
         }
 
-        if (link2InputDegrees < LINK2_MIN_TARGET_DEGREES ||
-            link2InputDegrees > LINK2_MAX_TARGET_DEGREES) {
+        if (link2InputDegrees < SCARA_LINK2_MIN_TARGET_DEGREES ||
+            link2InputDegrees > SCARA_LINK2_MAX_TARGET_DEGREES) {
             printf("Invalid Link 2 target. Enter an angle from %.0f to %.0f degrees.\n",
-                   LINK2_MIN_TARGET_DEGREES,
-                   LINK2_MAX_TARGET_DEGREES);
+                   SCARA_LINK2_MIN_TARGET_DEGREES,
+                   SCARA_LINK2_MAX_TARGET_DEGREES);
             continue;
         }
 
-        setScaraTargetAngles(link1InputDegrees, link2InputDegrees);
+        if (setScaraAngles(link1InputDegrees, link2InputDegrees)) {
+            printf("Movement complete\n");
+        } else {
+            printf("Movement did not complete: control was released, the target changed, or the movement timed out\n");
+        }
     }
-}
-
-static void setScaraTargetAngles(float theta1Degrees, float theta2Degrees)
-{
-    float link1PhysicalDegrees = theta1Degrees;
-    float link2PhysicalDegrees = theta1Degrees + theta2Degrees;
-
-    int32_t link1TargetCounts = degreesToEncoderCount(link1PhysicalDegrees);
-    int32_t link2TargetCounts = degreesToEncoderCount(link2PhysicalDegrees);
-
-    // Setting the targetcount based on home
-    motorSetLink1TargetCount(link1TargetCounts);
-    motorSetLink2TargetCount(link2TargetCounts);
-
-    printf("SCARA target: theta1 %.2f degrees, theta2 %.2f degrees | Physical Link 1: %.2f degrees (%ld counts) | Physical Link 2: %.2f degrees (%ld counts)\n",
-           theta1Degrees,
-           theta2Degrees,
-           link1PhysicalDegrees,
-           (long)link1TargetCounts,
-           link2PhysicalDegrees,
-           (long)link2TargetCounts);
-
-    if (motorWaitUntilTargetReached(MOTOR_MOVE_TIMEOUT_MS)) {
-        printf("Movement complete\n");
-    } else {
-        printf("Movement did not complete: control was released, the target changed, or the movement timed out\n");
-    }
-}
-
-static int32_t degreesToEncoderCount(float inputDegrees)
-{
-    /*-------------------------|Angle to Target Count|----------------------------*/
-    // Getting the targetCounts(float) value from the input degree
-    float targetCountsFloat = inputDegrees * ENCODER_COUNTS_PER_REVOLUTION / 360.0f;
-
-    // Round the float value to the nearest integer.
-    int32_t targetCounts;
-
-    // adding 0.5 or -0.5 before truncating into int for rounding
-    if (targetCountsFloat >= 0.0f) {
-        targetCounts = (int32_t)(targetCountsFloat + 0.5f);
-    }
-    else {
-        targetCounts = (int32_t)(targetCountsFloat - 0.5f);
-    }
-
-    return targetCounts;
 }
