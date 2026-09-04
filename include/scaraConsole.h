@@ -30,7 +30,7 @@ enum scaraCmd {SCARA_HOME,
                 SCARA_IK,
                 SET_SCARA_ANGLES,
                 SCARA_WIFI_STATUS,
-                SCARA_WIFI_DETECT,
+                SCARA_WIFI_SCAN,
                 SCARA_WIFI_CONNECT,
                 SCARA_WIFI_DISCONNECT};
 

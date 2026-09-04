@@ -23,6 +23,8 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
 #include "nvs_flash.h"
 
 /*|CONSTANTS|------------------------------------------------------------------*/
@@ -32,12 +34,19 @@
 #define WIFI_MANAGER_CONNECT_TIMEOUT_MS 10000
 #define WIFI_MANAGER_CONNECTED_BIT BIT0
 #define WIFI_MANAGER_CONNECT_FAILED_BIT BIT1
+#define WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS 6
+#define WIFI_MANAGER_RECONNECT_TASK_STACK_SIZE 4096
+#define WIFI_MANAGER_RECONNECT_TASK_PRIORITY 1
 
 /*|Function Prototype|---------------------------------------------------------*/
 static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventData);
 static bool checkEspResult(esp_err_t result, const char *operation);
 static const char *wifiAuthModeToString(wifi_auth_mode_t authMode);
 static bool wifiAuthModeUsesPersonalPassword(wifi_auth_mode_t authMode);
+static bool wifiDisconnectReasonIsAuthenticationFailure(uint8_t reason);
+static void scheduleAutomaticReconnect(void);
+static void reconnectTimerCallback(TimerHandle_t timer);
+static void wifiReconnectTask(void *arg);
 
 /*|Variable Declaration|-------------------------------------------------------*/
 static volatile WIFI_MANAGER_STATUS wifiStatus = WIFI_MANAGER_UNINITIALIZED;
@@ -46,7 +55,11 @@ static bool wifiInitialized = false;
 static wifi_ap_record_t detectedNetworks[WIFI_MANAGER_MAX_DETECTED_NETWORKS];
 static uint16_t detectedNetworkCount = 0;
 static EventGroupHandle_t wifiEventGroup = NULL;
-static bool connectionRequested = false;
+static TimerHandle_t reconnectTimer = NULL;
+static TaskHandle_t reconnectTaskHandle = NULL;
+static volatile bool connectionRequested = false;
+static volatile bool manualConnectWaiting = false;
+static volatile uint8_t reconnectAttemptCount = 0;
 static char connectedSsid[WIFI_MANAGER_SSID_LENGTH] = "";
 
 /*|Function Definitions|-------------------------------------------------------*/
@@ -59,6 +72,26 @@ bool wifiManagerInit(void)
     wifiEventGroup = xEventGroupCreate();
     if (wifiEventGroup == NULL) {
         printf("Wi-Fi initialization failed: event group creation failed\n");
+        return false;
+    }
+
+    reconnectTimer = xTimerCreate("wifiReconnectTimer",
+                                  pdMS_TO_TICKS(1000),
+                                  pdFALSE,
+                                  NULL,
+                                  reconnectTimerCallback);
+    if (reconnectTimer == NULL) {
+        printf("Wi-Fi initialization failed: reconnect timer creation failed\n");
+        return false;
+    }
+
+    if (xTaskCreate(wifiReconnectTask,
+                    "wifiReconnectTask",
+                    WIFI_MANAGER_RECONNECT_TASK_STACK_SIZE,
+                    NULL,
+                    WIFI_MANAGER_RECONNECT_TASK_PRIORITY,
+                    &reconnectTaskHandle) != pdPASS) {
+        printf("Wi-Fi initialization failed: reconnect task creation failed\n");
         return false;
     }
 
@@ -103,7 +136,7 @@ bool wifiManagerInit(void)
     return true;
 }
 
-bool wifiManagerDetectNetworks(void)
+bool wifiManagerScanNetworks(void)
 {
     if (!wifiInitialized) {
         printf("Wi-Fi scan failed: Wi-Fi manager is not initialized\n");
@@ -235,6 +268,8 @@ bool wifiManagerConnect(int networkIndex, const char *password)
                          WIFI_MANAGER_CONNECTED_BIT | WIFI_MANAGER_CONNECT_FAILED_BIT);
 
     connectionRequested = true;
+    manualConnectWaiting = true;
+    reconnectAttemptCount = 0;
     wifiStatus = WIFI_MANAGER_CONNECTING;
     snprintf(connectedSsid,
              sizeof(connectedSsid),
@@ -248,6 +283,7 @@ bool wifiManagerConnect(int networkIndex, const char *password)
         printf("Wi-Fi connection failed while setting configuration: %s\n",
                esp_err_to_name(configurationResult));
         connectionRequested = false;
+        manualConnectWaiting = false;
         wifiStatus = WIFI_MANAGER_DISCONNECTED;
         connectedSsid[0] = '\0';
         return false;
@@ -257,6 +293,7 @@ bool wifiManagerConnect(int networkIndex, const char *password)
     if (connectionResult != ESP_OK) {
         printf("Wi-Fi connection request failed: %s\n", esp_err_to_name(connectionResult));
         connectionRequested = false;
+        manualConnectWaiting = false;
         wifiStatus = WIFI_MANAGER_DISCONNECTED;
         connectedSsid[0] = '\0';
         return false;
@@ -271,6 +308,7 @@ bool wifiManagerConnect(int networkIndex, const char *password)
     );
 
     if ((connectionBits & WIFI_MANAGER_CONNECTED_BIT) != 0) {
+        manualConnectWaiting = false;
         printf("Wi-Fi connected\n");
         printf("SSID: %s\n", connectedSsid);
         printf("IP address: %s\n", wifiIpAddress);
@@ -284,6 +322,7 @@ bool wifiManagerConnect(int networkIndex, const char *password)
     }
 
     connectionRequested = false;
+    manualConnectWaiting = false;
     wifiStatus = WIFI_MANAGER_DISCONNECTED;
     connectedSsid[0] = '\0';
     snprintf(wifiIpAddress, sizeof(wifiIpAddress), "0.0.0.0");
@@ -305,6 +344,9 @@ bool wifiManagerDisconnect(void)
 
     // Clear this first so a deliberate disconnect cannot trigger automatic reconnection later.
     connectionRequested = false;
+    manualConnectWaiting = false;
+    reconnectAttemptCount = 0;
+    xTimerStop(reconnectTimer, 0);
     esp_err_t disconnectResult = esp_wifi_disconnect();
     if (disconnectResult != ESP_OK && disconnectResult != ESP_ERR_WIFI_NOT_CONNECT) {
         printf("Wi-Fi disconnect failed: %s\n", esp_err_to_name(disconnectResult));
@@ -353,12 +395,31 @@ static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t even
     (void)arg;
 
     if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_DISCONNECTED) {
-        bool connectionFailed = connectionRequested && wifiStatus == WIFI_MANAGER_CONNECTING;
+        wifi_event_sta_disconnected_t *disconnectedEvent =
+            (wifi_event_sta_disconnected_t *)eventData;
+        bool connectionFailed = manualConnectWaiting;
         wifiStatus = WIFI_MANAGER_DISCONNECTED;
         snprintf(wifiIpAddress, sizeof(wifiIpAddress), "0.0.0.0");
 
         if (connectionFailed && wifiEventGroup != NULL) {
+            connectionRequested = false;
+            manualConnectWaiting = false;
             xEventGroupSetBits(wifiEventGroup, WIFI_MANAGER_CONNECT_FAILED_BIT);
+            return;
+        }
+
+        if (connectionRequested) {
+            printf("Wi-Fi unexpectedly disconnected. Reason: %u\n",
+                   (unsigned int)disconnectedEvent->reason);
+
+            if (wifiDisconnectReasonIsAuthenticationFailure(disconnectedEvent->reason)) {
+                printf("Wi-Fi reconnection stopped: authentication failed\n");
+                connectionRequested = false;
+                connectedSsid[0] = '\0';
+                return;
+            }
+
+            scheduleAutomaticReconnect();
         }
         return;
     }
@@ -369,10 +430,20 @@ static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t even
                  sizeof(wifiIpAddress),
                  IPSTR,
                  IP2STR(&gotIpEvent->ip_info.ip));
+        bool automaticallyReconnected = reconnectAttemptCount > 0;
         wifiStatus = WIFI_MANAGER_CONNECTED;
+        manualConnectWaiting = false;
+        reconnectAttemptCount = 0;
+        xTimerStop(reconnectTimer, 0);
 
         if (wifiEventGroup != NULL) {
             xEventGroupSetBits(wifiEventGroup, WIFI_MANAGER_CONNECTED_BIT);
+        }
+
+        if (automaticallyReconnected) {
+            printf("Wi-Fi reconnected\n");
+            printf("SSID: %s\n", connectedSsid);
+            printf("IP address: %s\n", wifiIpAddress);
         }
     }
 }
@@ -439,5 +510,90 @@ static bool wifiAuthModeUsesPersonalPassword(wifi_auth_mode_t authMode)
 
         default:
             return false;
+    }
+}
+
+static bool wifiDisconnectReasonIsAuthenticationFailure(uint8_t reason)
+{
+    return reason == WIFI_REASON_AUTH_FAIL ||
+           reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+           reason == WIFI_REASON_HANDSHAKE_TIMEOUT;
+}
+
+static void scheduleAutomaticReconnect(void)
+{
+    static const uint32_t reconnectDelayMs[WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS] = {
+        1000,
+        2000,
+        4000,
+        8000,
+        15000,
+        30000
+    };
+
+    if (!connectionRequested) {
+        return;
+    }
+
+    if (xTimerIsTimerActive(reconnectTimer) != pdFALSE) {
+        return;
+    }
+
+    if (reconnectAttemptCount >= WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS) {
+        printf("Wi-Fi reconnection failed after %u attempts\n",
+               (unsigned int)WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS);
+        connectionRequested = false;
+        wifiStatus = WIFI_MANAGER_DISCONNECTED;
+        connectedSsid[0] = '\0';
+        return;
+    }
+
+    uint32_t retryDelayMs = reconnectDelayMs[reconnectAttemptCount];
+    reconnectAttemptCount++;
+    wifiStatus = WIFI_MANAGER_CONNECTING;
+
+    printf("Reconnect attempt %u/%u in %lu second(s)\n",
+           (unsigned int)reconnectAttemptCount,
+           (unsigned int)WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS,
+           (unsigned long)(retryDelayMs / 1000));
+
+    if (xTimerChangePeriod(reconnectTimer, pdMS_TO_TICKS(retryDelayMs), 0) != pdPASS) {
+        printf("Wi-Fi reconnection scheduling failed\n");
+        connectionRequested = false;
+        wifiStatus = WIFI_MANAGER_DISCONNECTED;
+        connectedSsid[0] = '\0';
+    }
+}
+
+static void reconnectTimerCallback(TimerHandle_t timer)
+{
+    (void)timer;
+
+    // Keep the shared Timer Service Task lightweight; the dedicated task does the Wi-Fi work.
+    if (connectionRequested && reconnectTaskHandle != NULL) {
+        xTaskNotifyGive(reconnectTaskHandle);
+    }
+}
+
+static void wifiReconnectTask(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        if (!connectionRequested) {
+            continue;
+        }
+
+        printf("Starting Wi-Fi reconnect attempt %u/%u\n",
+               (unsigned int)reconnectAttemptCount,
+               (unsigned int)WIFI_MANAGER_MAX_RECONNECT_ATTEMPTS);
+
+        esp_err_t reconnectResult = esp_wifi_connect();
+        if (reconnectResult != ESP_OK) {
+            printf("Wi-Fi reconnect request failed: %s\n", esp_err_to_name(reconnectResult));
+            scheduleAutomaticReconnect();
+        }
     }
 }

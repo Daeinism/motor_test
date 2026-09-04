@@ -37,7 +37,7 @@ CMD scaraCommands[MAX_CMD] = { // format: {"commandName", number of arguments}
     {"ik", 3},
     {"setScaraAngles", 2},
     {"wifiStatus", 0},
-    {"wifiDetect", 0},
+    {"wifiScan", 0},
     {"wifiConnect", 2},
     {"wifiDisconnect", 0}
 };
@@ -209,7 +209,7 @@ int validateScaraCommand(SCARA_CONSOLE *con){
         case SCARA_HOLD:
         case SCARA_BATTERY:
         case SCARA_WIFI_STATUS:
-        case SCARA_WIFI_DETECT:
+        case SCARA_WIFI_SCAN:
         case SCARA_WIFI_DISCONNECT:
             // nothing to check
             break;
@@ -272,9 +272,9 @@ int executeScaraCommand(SCARA_CONSOLE* con){
             wifiManagerPrintStatus();
             return 1;
 
-        /*------------------------|Wi-Fi Detect Command|---------------------------*/
-        case SCARA_WIFI_DETECT:
-            return wifiManagerDetectNetworks();
+        /*------------------------|Wi-Fi Scan Command|-----------------------------*/
+        case SCARA_WIFI_SCAN:
+            return wifiManagerScanNetworks();
 
         /*------------------------|Wi-Fi Connect Command|--------------------------*/
         case SCARA_WIFI_CONNECT:
