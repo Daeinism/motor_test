@@ -24,6 +24,8 @@ typedef enum WIFI_MANAGER_STATUS {
 
 bool wifiManagerInit(void);
 bool wifiManagerDetectNetworks(void);
+bool wifiManagerConnect(int networkIndex, const char *password);
+bool wifiManagerDisconnect(void);
 WIFI_MANAGER_STATUS wifiManagerGetStatus(void);
 void wifiManagerPrintStatus(void);
 

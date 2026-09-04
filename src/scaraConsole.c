@@ -37,7 +37,9 @@ CMD scaraCommands[MAX_CMD] = { // format: {"commandName", number of arguments}
     {"ik", 3},
     {"setScaraAngles", 2},
     {"wifiStatus", 0},
-    {"wifiDetect", 0}
+    {"wifiDetect", 0},
+    {"wifiConnect", 2},
+    {"wifiDisconnect", 0}
 };
 
 static int parseDoubleArgument(const char *text, double *value);
@@ -193,12 +195,22 @@ int validateScaraCommand(SCARA_CONSOLE *con){
             }
             break;
         }
+        case SCARA_WIFI_CONNECT:
+        {
+            int networkIndex;
+            if (!parseIntArgument(con->args[0], &networkIndex) || networkIndex < 0) {
+                printf("Error: Wi-Fi network number must be a non-negative integer\n");
+                return 0;
+            }
+            break;
+        }
         case SCARA_HOME:
         case SCARA_RELEASE:
         case SCARA_HOLD:
         case SCARA_BATTERY:
         case SCARA_WIFI_STATUS:
         case SCARA_WIFI_DETECT:
+        case SCARA_WIFI_DISCONNECT:
             // nothing to check
             break;
     }
@@ -263,6 +275,17 @@ int executeScaraCommand(SCARA_CONSOLE* con){
         /*------------------------|Wi-Fi Detect Command|---------------------------*/
         case SCARA_WIFI_DETECT:
             return wifiManagerDetectNetworks();
+
+        /*------------------------|Wi-Fi Connect Command|--------------------------*/
+        case SCARA_WIFI_CONNECT:
+        {
+            int networkIndex = atoi(con->args[0]);
+            return wifiManagerConnect(networkIndex, con->args[1]);
+        }
+
+        /*------------------------|Wi-Fi Disconnect Command|-----------------------*/
+        case SCARA_WIFI_DISCONNECT:
+            return wifiManagerDisconnect();
 
         /*------------------------|Kinematics Command|-----------------------------*/
         case SCARA_FK:

@@ -18,9 +18,9 @@
 #include <string.h> // strcmp,
 
 /*|CONSTANTS|------------------------------------------------------------------*/
-#define MAX_CMD 9
+#define MAX_CMD 11
 #define MAX_ARGS 3
-#define MAX_SCARA_STRING 64
+#define MAX_SCARA_STRING 128
 
 enum scaraCmd {SCARA_HOME,
                 SCARA_RELEASE,
@@ -30,7 +30,9 @@ enum scaraCmd {SCARA_HOME,
                 SCARA_IK,
                 SET_SCARA_ANGLES,
                 SCARA_WIFI_STATUS,
-                SCARA_WIFI_DETECT};
+                SCARA_WIFI_DETECT,
+                SCARA_WIFI_CONNECT,
+                SCARA_WIFI_DISCONNECT};
 
 /*|Structures|-----------------------------------------------------------------*/
 typedef struct CMD{ // Command

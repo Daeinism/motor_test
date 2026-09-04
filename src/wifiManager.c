@@ -21,16 +21,23 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "nvs_flash.h"
 
 /*|CONSTANTS|------------------------------------------------------------------*/
 #define WIFI_MANAGER_IP_ADDRESS_LENGTH 16
 #define WIFI_MANAGER_MAX_DETECTED_NETWORKS 20
+#define WIFI_MANAGER_SSID_LENGTH 33
+#define WIFI_MANAGER_CONNECT_TIMEOUT_MS 10000
+#define WIFI_MANAGER_CONNECTED_BIT BIT0
+#define WIFI_MANAGER_CONNECT_FAILED_BIT BIT1
 
 /*|Function Prototype|---------------------------------------------------------*/
 static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventData);
 static bool checkEspResult(esp_err_t result, const char *operation);
 static const char *wifiAuthModeToString(wifi_auth_mode_t authMode);
+static bool wifiAuthModeUsesPersonalPassword(wifi_auth_mode_t authMode);
 
 /*|Variable Declaration|-------------------------------------------------------*/
 static volatile WIFI_MANAGER_STATUS wifiStatus = WIFI_MANAGER_UNINITIALIZED;
@@ -38,12 +45,21 @@ static char wifiIpAddress[WIFI_MANAGER_IP_ADDRESS_LENGTH] = "0.0.0.0";
 static bool wifiInitialized = false;
 static wifi_ap_record_t detectedNetworks[WIFI_MANAGER_MAX_DETECTED_NETWORKS];
 static uint16_t detectedNetworkCount = 0;
+static EventGroupHandle_t wifiEventGroup = NULL;
+static bool connectionRequested = false;
+static char connectedSsid[WIFI_MANAGER_SSID_LENGTH] = "";
 
 /*|Function Definitions|-------------------------------------------------------*/
 bool wifiManagerInit(void)
 {
     if (wifiInitialized) {
         return true;
+    }
+
+    wifiEventGroup = xEventGroupCreate();
+    if (wifiEventGroup == NULL) {
+        printf("Wi-Fi initialization failed: event group creation failed\n");
+        return false;
     }
 
     // NVS (Non-Volatile Storage) stores data required internally by the ESP-IDF Wi-Fi driver.
@@ -74,6 +90,7 @@ bool wifiManagerInit(void)
                                                    &wifiEventHandler,
                                                    NULL),
                         "IP event handler registration") ||
+        !checkEspResult(esp_wifi_set_storage(WIFI_STORAGE_RAM), "Wi-Fi configuration storage selection") ||
         !checkEspResult(esp_wifi_set_mode(WIFI_MODE_STA), "Wi-Fi Station mode selection") ||
         !checkEspResult(esp_wifi_start(), "Wi-Fi driver start")) {
         return false;
@@ -159,6 +176,150 @@ bool wifiManagerDetectNetworks(void)
     return true;
 }
 
+bool wifiManagerConnect(int networkIndex, const char *password)
+{
+    if (!wifiInitialized) {
+        printf("Wi-Fi connection failed: Wi-Fi manager is not initialized\n");
+        return false;
+    }
+
+    if (wifiStatus != WIFI_MANAGER_DISCONNECTED || connectionRequested) {
+        printf("Wi-Fi connection rejected: Wi-Fi is already connecting or connected\n");
+        return false;
+    }
+
+    if (networkIndex < 0 || networkIndex >= detectedNetworkCount) {
+        printf("Wi-Fi connection failed: network number is not in the latest scan results\n");
+        return false;
+    }
+
+    if (password == NULL || detectedNetworks[networkIndex].ssid[0] == '\0') {
+        printf("Wi-Fi connection failed: the selected network cannot be configured\n");
+        return false;
+    }
+
+    wifi_auth_mode_t authMode = detectedNetworks[networkIndex].authmode;
+    const char *configuredPassword = password;
+    size_t passwordLength = strlen(password);
+
+    if (authMode == WIFI_AUTH_OPEN) {
+        if (strcmp(password, "-") != 0) {
+            printf("Wi-Fi connection failed: use - as the password for an open network\n");
+            return false;
+        }
+        configuredPassword = "";
+    } else if (!wifiAuthModeUsesPersonalPassword(authMode)) {
+        printf("Wi-Fi connection failed: the selected security mode is not supported\n");
+        return false;
+    } else if (passwordLength < 8 || passwordLength > 63) {
+        printf("Wi-Fi connection failed: password must contain 8 to 63 characters\n");
+        return false;
+    }
+
+    wifi_config_t wifiConfiguration = {0};
+    memcpy(wifiConfiguration.sta.ssid,
+           detectedNetworks[networkIndex].ssid,
+           sizeof(wifiConfiguration.sta.ssid));
+    memcpy(wifiConfiguration.sta.bssid,
+           detectedNetworks[networkIndex].bssid,
+           sizeof(wifiConfiguration.sta.bssid));
+    wifiConfiguration.sta.bssid_set = true;
+    wifiConfiguration.sta.channel = detectedNetworks[networkIndex].primary;
+    wifiConfiguration.sta.threshold.authmode = authMode;
+    snprintf((char *)wifiConfiguration.sta.password,
+             sizeof(wifiConfiguration.sta.password),
+             "%s",
+             configuredPassword);
+
+    xEventGroupClearBits(wifiEventGroup,
+                         WIFI_MANAGER_CONNECTED_BIT | WIFI_MANAGER_CONNECT_FAILED_BIT);
+
+    connectionRequested = true;
+    wifiStatus = WIFI_MANAGER_CONNECTING;
+    snprintf(connectedSsid,
+             sizeof(connectedSsid),
+             "%s",
+             (const char *)detectedNetworks[networkIndex].ssid);
+
+    printf("Connecting to %s...\n", connectedSsid);
+
+    esp_err_t configurationResult = esp_wifi_set_config(WIFI_IF_STA, &wifiConfiguration);
+    if (configurationResult != ESP_OK) {
+        printf("Wi-Fi connection failed while setting configuration: %s\n",
+               esp_err_to_name(configurationResult));
+        connectionRequested = false;
+        wifiStatus = WIFI_MANAGER_DISCONNECTED;
+        connectedSsid[0] = '\0';
+        return false;
+    }
+
+    esp_err_t connectionResult = esp_wifi_connect();
+    if (connectionResult != ESP_OK) {
+        printf("Wi-Fi connection request failed: %s\n", esp_err_to_name(connectionResult));
+        connectionRequested = false;
+        wifiStatus = WIFI_MANAGER_DISCONNECTED;
+        connectedSsid[0] = '\0';
+        return false;
+    }
+
+    EventBits_t connectionBits = xEventGroupWaitBits(
+        wifiEventGroup,
+        WIFI_MANAGER_CONNECTED_BIT | WIFI_MANAGER_CONNECT_FAILED_BIT,
+        pdTRUE,
+        pdFALSE,
+        pdMS_TO_TICKS(WIFI_MANAGER_CONNECT_TIMEOUT_MS)
+    );
+
+    if ((connectionBits & WIFI_MANAGER_CONNECTED_BIT) != 0) {
+        printf("Wi-Fi connected\n");
+        printf("SSID: %s\n", connectedSsid);
+        printf("IP address: %s\n", wifiIpAddress);
+        return true;
+    }
+
+    if ((connectionBits & WIFI_MANAGER_CONNECT_FAILED_BIT) != 0) {
+        printf("Wi-Fi connection failed\n");
+    } else {
+        printf("Wi-Fi connection failed: IP address acquisition timed out\n");
+    }
+
+    connectionRequested = false;
+    wifiStatus = WIFI_MANAGER_DISCONNECTED;
+    connectedSsid[0] = '\0';
+    snprintf(wifiIpAddress, sizeof(wifiIpAddress), "0.0.0.0");
+    esp_wifi_disconnect();
+    return false;
+}
+
+bool wifiManagerDisconnect(void)
+{
+    if (!wifiInitialized) {
+        printf("Wi-Fi disconnect failed: Wi-Fi manager is not initialized\n");
+        return false;
+    }
+
+    if (wifiStatus == WIFI_MANAGER_DISCONNECTED && !connectionRequested) {
+        printf("Wi-Fi is already disconnected\n");
+        return true;
+    }
+
+    // Clear this first so a deliberate disconnect cannot trigger automatic reconnection later.
+    connectionRequested = false;
+    esp_err_t disconnectResult = esp_wifi_disconnect();
+    if (disconnectResult != ESP_OK && disconnectResult != ESP_ERR_WIFI_NOT_CONNECT) {
+        printf("Wi-Fi disconnect failed: %s\n", esp_err_to_name(disconnectResult));
+        return false;
+    }
+
+    wifiStatus = WIFI_MANAGER_DISCONNECTED;
+    connectedSsid[0] = '\0';
+    snprintf(wifiIpAddress, sizeof(wifiIpAddress), "0.0.0.0");
+    xEventGroupClearBits(wifiEventGroup,
+                         WIFI_MANAGER_CONNECTED_BIT | WIFI_MANAGER_CONNECT_FAILED_BIT);
+    printf("Wi-Fi disconnected\n");
+    return true;
+}
+
 WIFI_MANAGER_STATUS wifiManagerGetStatus(void)
 {
     return wifiStatus;
@@ -181,6 +342,7 @@ void wifiManagerPrintStatus(void)
 
         case WIFI_MANAGER_CONNECTED:
             printf("Wi-Fi status: connected\n");
+            printf("SSID: %s\n", connectedSsid);
             printf("IP address: %s\n", wifiIpAddress);
             break;
     }
@@ -191,8 +353,13 @@ static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t even
     (void)arg;
 
     if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_DISCONNECTED) {
+        bool connectionFailed = connectionRequested && wifiStatus == WIFI_MANAGER_CONNECTING;
         wifiStatus = WIFI_MANAGER_DISCONNECTED;
         snprintf(wifiIpAddress, sizeof(wifiIpAddress), "0.0.0.0");
+
+        if (connectionFailed && wifiEventGroup != NULL) {
+            xEventGroupSetBits(wifiEventGroup, WIFI_MANAGER_CONNECT_FAILED_BIT);
+        }
         return;
     }
 
@@ -203,6 +370,10 @@ static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t even
                  IPSTR,
                  IP2STR(&gotIpEvent->ip_info.ip));
         wifiStatus = WIFI_MANAGER_CONNECTED;
+
+        if (wifiEventGroup != NULL) {
+            xEventGroupSetBits(wifiEventGroup, WIFI_MANAGER_CONNECTED_BIT);
+        }
     }
 }
 
@@ -251,5 +422,22 @@ static const char *wifiAuthModeToString(wifi_auth_mode_t authMode)
             return "DPP";
         default:
             return "UNKNOWN";
+    }
+}
+
+static bool wifiAuthModeUsesPersonalPassword(wifi_auth_mode_t authMode)
+{
+    switch (authMode) {
+        case WIFI_AUTH_WPA_PSK:
+        case WIFI_AUTH_WPA2_PSK:
+        case WIFI_AUTH_WPA_WPA2_PSK:
+        case WIFI_AUTH_WPA3_PSK:
+        case WIFI_AUTH_WPA2_WPA3_PSK:
+        case WIFI_AUTH_WPA3_EXT_PSK:
+        case WIFI_AUTH_WPA3_EXT_PSK_MIXED_MODE:
+            return true;
+
+        default:
+            return false;
     }
 }
