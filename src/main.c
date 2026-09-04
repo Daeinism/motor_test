@@ -26,6 +26,7 @@
 #include "limitSwitch.h"
 #include "motor.h"
 #include "scara.h"
+#include "scaraCommandQueue.h"
 #include "scaraConsole.h"
 #include "scaraMotion.h"
 #include "statusLed.h"
@@ -49,6 +50,11 @@ void app_main(void)
         // motorEmergencyStop is just a function pointer, not a function call.
     voltageReaderInit();
 
+    if (!scaraCommandQueueInit()) {
+        printf("Failed to initialize SCARA command queue\n");
+        return;
+    }
+
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
 }
 
@@ -58,8 +64,6 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
     (void)arg; // Telling compiler "Don't need argument for this particular task, so don't ask"
 
     char inputBuffer[MAX_SCARA_STRING];
-    SCARA_CONSOLE console = initScaraConsole();
-
     printf("Enter Link 1 and Link 2 angles separated by a space, or type home/release/hold:\n");
 
     while (1) {
@@ -68,6 +72,8 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        processScaraCommand(&console, inputBuffer);
+        if (!scaraCommandQueueSend(inputBuffer)) {
+            printf("Command rejected: queue is full or the command is too long\n");
+        }
     }
 }
