@@ -36,7 +36,8 @@ CMD scaraCommands[MAX_CMD] = { // format: {"commandName", number of arguments}
     {"fk", 2},
     {"ik", 3},
     {"setScaraAngles", 2},
-    {"wifiStatus", 0}
+    {"wifiStatus", 0},
+    {"wifiDetect", 0}
 };
 
 static int parseDoubleArgument(const char *text, double *value);
@@ -197,6 +198,7 @@ int validateScaraCommand(SCARA_CONSOLE *con){
         case SCARA_HOLD:
         case SCARA_BATTERY:
         case SCARA_WIFI_STATUS:
+        case SCARA_WIFI_DETECT:
             // nothing to check
             break;
     }
@@ -257,6 +259,10 @@ int executeScaraCommand(SCARA_CONSOLE* con){
         case SCARA_WIFI_STATUS:
             wifiManagerPrintStatus();
             return 1;
+
+        /*------------------------|Wi-Fi Detect Command|---------------------------*/
+        case SCARA_WIFI_DETECT:
+            return wifiManagerDetectNetworks();
 
         /*------------------------|Kinematics Command|-----------------------------*/
         case SCARA_FK:

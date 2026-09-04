@@ -25,15 +25,19 @@
 
 /*|CONSTANTS|------------------------------------------------------------------*/
 #define WIFI_MANAGER_IP_ADDRESS_LENGTH 16
+#define WIFI_MANAGER_MAX_DETECTED_NETWORKS 20
 
 /*|Function Prototype|---------------------------------------------------------*/
 static void wifiEventHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventData);
 static bool checkEspResult(esp_err_t result, const char *operation);
+static const char *wifiAuthModeToString(wifi_auth_mode_t authMode);
 
 /*|Variable Declaration|-------------------------------------------------------*/
 static volatile WIFI_MANAGER_STATUS wifiStatus = WIFI_MANAGER_UNINITIALIZED;
 static char wifiIpAddress[WIFI_MANAGER_IP_ADDRESS_LENGTH] = "0.0.0.0";
 static bool wifiInitialized = false;
+static wifi_ap_record_t detectedNetworks[WIFI_MANAGER_MAX_DETECTED_NETWORKS];
+static uint16_t detectedNetworkCount = 0;
 
 /*|Function Definitions|-------------------------------------------------------*/
 bool wifiManagerInit(void)
@@ -79,6 +83,79 @@ bool wifiManagerInit(void)
     wifiStatus = WIFI_MANAGER_DISCONNECTED;
     wifiInitialized = true;
     printf("Wi-Fi manager initialized. Status: disconnected\n");
+    return true;
+}
+
+bool wifiManagerDetectNetworks(void)
+{
+    if (!wifiInitialized) {
+        printf("Wi-Fi scan failed: Wi-Fi manager is not initialized\n");
+        return false;
+    }
+
+    if (wifiStatus != WIFI_MANAGER_DISCONNECTED) {
+        printf("Wi-Fi scan rejected: disconnect from the current network first\n");
+        return false;
+    }
+
+    detectedNetworkCount = 0;
+    printf("Scanning for Wi-Fi networks...\n");
+
+    // A blocking scan keeps this command in sequence with the other queued commands.
+    esp_err_t scanResult = esp_wifi_scan_start(NULL, true);
+    if (scanResult != ESP_OK) {
+        printf("Wi-Fi scan failed: %s\n", esp_err_to_name(scanResult));
+        return false;
+    }
+
+    uint16_t totalNetworkCount = 0;
+    esp_err_t countResult = esp_wifi_scan_get_ap_num(&totalNetworkCount);
+    if (countResult != ESP_OK) {
+        printf("Wi-Fi scan result count failed: %s\n", esp_err_to_name(countResult));
+        esp_wifi_clear_ap_list();
+        return false;
+    }
+
+    if (totalNetworkCount == 0) {
+        printf("Wi-Fi scan complete: no networks found\n");
+        esp_wifi_clear_ap_list();
+        return true;
+    }
+
+    detectedNetworkCount = totalNetworkCount;
+    if (detectedNetworkCount > WIFI_MANAGER_MAX_DETECTED_NETWORKS) {
+        detectedNetworkCount = WIFI_MANAGER_MAX_DETECTED_NETWORKS;
+    }
+
+    esp_err_t recordsResult = esp_wifi_scan_get_ap_records(&detectedNetworkCount, detectedNetworks);
+    if (recordsResult != ESP_OK) {
+        detectedNetworkCount = 0;
+        printf("Wi-Fi scan result retrieval failed: %s\n", esp_err_to_name(recordsResult));
+        esp_wifi_clear_ap_list();
+        return false;
+    }
+
+    printf("Wi-Fi scan complete: %u network(s) found",
+           (unsigned int)totalNetworkCount);
+    if (totalNetworkCount > detectedNetworkCount) {
+        printf(" (showing strongest %u)", (unsigned int)detectedNetworkCount);
+    }
+    printf("\n");
+
+    // Keep these records so wifiConnect can select one by number in the next stage.
+    for (uint16_t i = 0; i < detectedNetworkCount; i++) {
+        const char *ssid = detectedNetworks[i].ssid[0] == '\0'
+                               ? "<hidden>"
+                               : (const char *)detectedNetworks[i].ssid;
+
+        printf("[%u] SSID: %s | RSSI: %d dBm | Channel: %u | Security: %s\n",
+               (unsigned int)i,
+               ssid,
+               detectedNetworks[i].rssi,
+               (unsigned int)detectedNetworks[i].primary,
+               wifiAuthModeToString(detectedNetworks[i].authmode));
+    }
+
     return true;
 }
 
@@ -139,4 +216,40 @@ static bool checkEspResult(esp_err_t result, const char *operation)
            operation,
            esp_err_to_name(result));
     return false;
+}
+
+static const char *wifiAuthModeToString(wifi_auth_mode_t authMode)
+{
+    switch (authMode) {
+        case WIFI_AUTH_OPEN:
+            return "OPEN";
+        case WIFI_AUTH_WEP:
+            return "WEP";
+        case WIFI_AUTH_WPA_PSK:
+            return "WPA";
+        case WIFI_AUTH_WPA2_PSK:
+            return "WPA2";
+        case WIFI_AUTH_WPA_WPA2_PSK:
+            return "WPA/WPA2";
+        case WIFI_AUTH_WPA3_PSK:
+        case WIFI_AUTH_WPA3_EXT_PSK:
+            return "WPA3";
+        case WIFI_AUTH_WPA2_WPA3_PSK:
+        case WIFI_AUTH_WPA3_EXT_PSK_MIXED_MODE:
+            return "WPA2/WPA3";
+        case WIFI_AUTH_OWE:
+            return "OWE";
+        case WIFI_AUTH_WAPI_PSK:
+            return "WAPI";
+        case WIFI_AUTH_ENTERPRISE:
+        case WIFI_AUTH_WPA3_ENT_192:
+        case WIFI_AUTH_WPA3_ENTERPRISE:
+        case WIFI_AUTH_WPA2_WPA3_ENTERPRISE:
+        case WIFI_AUTH_WPA_ENTERPRISE:
+            return "ENTERPRISE";
+        case WIFI_AUTH_DPP:
+            return "DPP";
+        default:
+            return "UNKNOWN";
+    }
 }
