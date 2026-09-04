@@ -25,6 +25,7 @@
 #include "motor.h"
 #include "scaraMotion.h"
 #include "voltageReader.h"
+#include "wifiManager.h"
 
 /*|Global Variables|-----------------------------------------------------------*/
 CMD scaraCommands[MAX_CMD] = { // format: {"commandName", number of arguments}
@@ -34,7 +35,8 @@ CMD scaraCommands[MAX_CMD] = { // format: {"commandName", number of arguments}
     {"battery", 0},
     {"fk", 2},
     {"ik", 3},
-    {"setScaraAngles", 2}
+    {"setScaraAngles", 2},
+    {"wifiStatus", 0}
 };
 
 static int parseDoubleArgument(const char *text, double *value);
@@ -194,6 +196,7 @@ int validateScaraCommand(SCARA_CONSOLE *con){
         case SCARA_RELEASE:
         case SCARA_HOLD:
         case SCARA_BATTERY:
+        case SCARA_WIFI_STATUS:
             // nothing to check
             break;
     }
@@ -248,6 +251,11 @@ int executeScaraCommand(SCARA_CONSOLE* con){
         /*------------------------|Battery Command|-------------------------------*/
         case SCARA_BATTERY:
             voltageReaderPrintStatus();
+            return 1;
+
+        /*------------------------|Wi-Fi Status Command|---------------------------*/
+        case SCARA_WIFI_STATUS:
+            wifiManagerPrintStatus();
             return 1;
 
         /*------------------------|Kinematics Command|-----------------------------*/

@@ -31,6 +31,7 @@
 #include "scaraMotion.h"
 #include "statusLed.h"
 #include "voltageReader.h"
+#include "wifiManager.h"
 
 
 /*|Function Prototype|-------------------------------------------------------*/
@@ -49,6 +50,10 @@ void app_main(void)
     limitSwitchInit(motorEmergencyStop);
         // motorEmergencyStop is just a function pointer, not a function call.
     voltageReaderInit();
+
+    if (!wifiManagerInit()) {
+        printf("Wi-Fi manager is unavailable\n");
+    }
 
     if (!scaraCommandQueueInit()) {
         printf("Failed to initialize SCARA command queue\n");
