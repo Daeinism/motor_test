@@ -25,6 +25,7 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
+#include "scaraConsole.h"
 #include "wifiManager.h"
 
 /*|CONSTANTS|------------------------------------------------------------------*/
@@ -39,7 +40,7 @@
 static void tcpCommandServerTask(void *arg);
 static int createListeningSocket(void);
 static int waitForClient(int listeningSocket);
-static void serveEchoClient(int clientSocket);
+static void serveCommandClient(int clientSocket);
 static bool sendAll(int socket, const char *data, size_t length);
 static void closeSocket(int socket);
 
@@ -70,7 +71,7 @@ static void tcpCommandServerTask(void *arg)
             continue;
         }
 
-        printf("TCP echo server listening on port %d\n", TCP_COMMAND_SERVER_PORT);
+        printf("TCP command server listening on port %d\n", TCP_COMMAND_SERVER_PORT);
 
         while (wifiManagerGetStatus() == WIFI_MANAGER_CONNECTED) {
             int clientSocket = waitForClient(listeningSocket);
@@ -79,13 +80,13 @@ static void tcpCommandServerTask(void *arg)
             }
 
             printf("TCP client connected\n");
-            serveEchoClient(clientSocket);
+            serveCommandClient(clientSocket);
             closeSocket(clientSocket);
             printf("TCP client disconnected\n");
         }
 
         closeSocket(listeningSocket);
-        printf("TCP echo server stopped: Wi-Fi is disconnected\n");
+        printf("TCP command server stopped: Wi-Fi is disconnected\n");
     }
 }
 
@@ -161,12 +162,17 @@ static int waitForClient(int listeningSocket)
                   &clientAddressLength);
 }
 
-static void serveEchoClient(int clientSocket)
+static void serveCommandClient(int clientSocket)
 {
     static const char welcomeMessage[] =
-        "SCARA TCP echo server connected\n";
-    static const char echoPrefix[] = "ECHO: ";
+        "SCARA TCP command server connected\n";
+    static const char linePrefix[] = "LINE: ";
+    static const char commandTooLongMessage[] =
+        "ERROR COMMAND_TOO_LONG\n";
     char receiveBuffer[TCP_COMMAND_SERVER_RECEIVE_BUFFER_SIZE];
+    char commandBuffer[MAX_SCARA_STRING];
+    size_t commandLength = 0;
+    bool discardingLongCommand = false;
 
     if (!sendAll(clientSocket, welcomeMessage, sizeof(welcomeMessage) - 1)) {
         return;
@@ -201,9 +207,50 @@ static void serveEchoClient(int clientSocket)
             return;
         }
 
-        if (!sendAll(clientSocket, echoPrefix, sizeof(echoPrefix) - 1) ||
-            !sendAll(clientSocket, receiveBuffer, (size_t)receivedLength)) {
-            return;
+        for (int i = 0; i < receivedLength; i++) {
+            char receivedCharacter = receiveBuffer[i];
+
+            // Ignore carriage returns so both "\n" and "\r\n" can terminate a command.
+            if (receivedCharacter == '\r') {
+                continue;
+            }
+
+            if (discardingLongCommand) {
+                if (receivedCharacter == '\n') {
+                    discardingLongCommand = false;
+                }
+                continue;
+            }
+
+            if (receivedCharacter == '\n') {
+                if (commandLength == 0) {
+                    continue;
+                }
+
+                commandBuffer[commandLength] = '\0';
+                if (!sendAll(clientSocket, linePrefix, sizeof(linePrefix) - 1) ||
+                    !sendAll(clientSocket, commandBuffer, commandLength) ||
+                    !sendAll(clientSocket, "\n", 1)) {
+                    return;
+                }
+
+                commandLength = 0;
+                continue;
+            }
+
+            if (commandLength >= sizeof(commandBuffer) - 1) {
+                if (!sendAll(clientSocket,
+                             commandTooLongMessage,
+                             sizeof(commandTooLongMessage) - 1)) {
+                    return;
+                }
+
+                commandLength = 0;
+                discardingLongCommand = true;
+                continue;
+            }
+
+            commandBuffer[commandLength++] = receivedCharacter;
         }
     }
 }
