@@ -25,6 +25,7 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
+#include "scaraCommandQueue.h"
 #include "scaraConsole.h"
 #include "wifiManager.h"
 
@@ -166,7 +167,8 @@ static void serveCommandClient(int clientSocket)
 {
     static const char welcomeMessage[] =
         "SCARA TCP command server connected\n";
-    static const char linePrefix[] = "LINE: ";
+    static const char queuedMessage[] = "QUEUED\n";
+    static const char queueFullMessage[] = "ERROR QUEUE_FULL\n";
     static const char commandTooLongMessage[] =
         "ERROR COMMAND_TOO_LONG\n";
     char receiveBuffer[TCP_COMMAND_SERVER_RECEIVE_BUFFER_SIZE];
@@ -228,9 +230,18 @@ static void serveCommandClient(int clientSocket)
                 }
 
                 commandBuffer[commandLength] = '\0';
-                if (!sendAll(clientSocket, linePrefix, sizeof(linePrefix) - 1) ||
-                    !sendAll(clientSocket, commandBuffer, commandLength) ||
-                    !sendAll(clientSocket, "\n", 1)) {
+                const char *response;
+                size_t responseLength;
+
+                if (scaraCommandQueueSend(commandBuffer)) {
+                    response = queuedMessage;
+                    responseLength = sizeof(queuedMessage) - 1;
+                } else {
+                    response = queueFullMessage;
+                    responseLength = sizeof(queueFullMessage) - 1;
+                }
+
+                if (!sendAll(clientSocket, response, responseLength)) {
                     return;
                 }
 

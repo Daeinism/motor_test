@@ -52,15 +52,15 @@ void app_main(void)
         // motorEmergencyStop is just a function pointer, not a function call.
     voltageReaderInit();
 
+    if (!scaraCommandQueueInit()) {
+        printf("Failed to initialize SCARA command queue\n");
+        return;
+    }
+
     if (!wifiManagerInit()) {
         printf("Wi-Fi manager is unavailable\n");
     } else if (!tcpCommandServerInit()) {
         printf("TCP command server is unavailable\n");
-    }
-
-    if (!scaraCommandQueueInit()) {
-        printf("Failed to initialize SCARA command queue\n");
-        return;
     }
 
     xTaskCreate(userInputTask, "userInputTask", 4096, NULL, 1, NULL);
