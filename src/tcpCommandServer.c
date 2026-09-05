@@ -42,6 +42,7 @@ static void tcpCommandServerTask(void *arg);
 static int createListeningSocket(void);
 static int waitForClient(int listeningSocket);
 static void serveCommandClient(int clientSocket);
+static bool sendPendingCommandResults(int clientSocket);
 static bool sendAll(int socket, const char *data, size_t length);
 static void closeSocket(int socket);
 
@@ -181,6 +182,10 @@ static void serveCommandClient(int clientSocket)
     }
 
     while (wifiManagerGetStatus() == WIFI_MANAGER_CONNECTED) {
+        if (!sendPendingCommandResults(clientSocket)) {
+            return;
+        }
+
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(clientSocket, &readSet);
@@ -233,7 +238,7 @@ static void serveCommandClient(int clientSocket)
                 const char *response;
                 size_t responseLength;
 
-                if (scaraCommandQueueSend(commandBuffer)) {
+                if (scaraCommandQueueSend(commandBuffer, SCARA_COMMAND_SOURCE_TCP)) {
                     response = queuedMessage;
                     responseLength = sizeof(queuedMessage) - 1;
                 } else {
@@ -264,6 +269,28 @@ static void serveCommandClient(int clientSocket)
             commandBuffer[commandLength++] = receivedCharacter;
         }
     }
+}
+
+static bool sendPendingCommandResults(int clientSocket)
+{
+    static const char doneMessage[] = "DONE\n";
+    static const char errorMessage[] = "ERROR\n";
+    SCARA_COMMAND_RESULT result;
+
+    while (scaraCommandResultReceive(&result)) {
+        const char *message = result == SCARA_COMMAND_RESULT_DONE
+            ? doneMessage
+            : errorMessage;
+        size_t messageLength = result == SCARA_COMMAND_RESULT_DONE
+            ? sizeof(doneMessage) - 1
+            : sizeof(errorMessage) - 1;
+
+        if (!sendAll(clientSocket, message, messageLength)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static bool sendAll(int socket, const char *data, size_t length)

@@ -14,6 +14,7 @@
 /*|Includes|-------------------------------------------------------------------*/
 #include "scaraCommandQueue.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -24,12 +25,14 @@
 
 /*|CONSTANTS|------------------------------------------------------------------*/
 #define SCARA_COMMAND_QUEUE_LENGTH 10
+#define SCARA_COMMAND_RESULT_QUEUE_LENGTH 10
 #define SCARA_COMMAND_EXECUTOR_STACK_SIZE 4096
 #define SCARA_COMMAND_EXECUTOR_PRIORITY 1
 
 /*|Structures|-----------------------------------------------------------------*/
 typedef struct SCARA_COMMAND_MESSAGE {
     char text[MAX_SCARA_STRING];
+    SCARA_COMMAND_SOURCE source;
 } SCARA_COMMAND_MESSAGE;
 
 /*|Function Prototype|---------------------------------------------------------*/
@@ -37,6 +40,7 @@ static void commandExecutorTask(void *arg);
 
 /*|Variable Declaration|-------------------------------------------------------*/
 static QueueHandle_t commandQueue = NULL;
+static QueueHandle_t commandResultQueue = NULL;
 
 /*|Function Definitions|-------------------------------------------------------*/
 bool scaraCommandQueueInit(void)
@@ -44,6 +48,14 @@ bool scaraCommandQueueInit(void)
     // The queue copies each complete command string into its own storage.
     commandQueue = xQueueCreate(SCARA_COMMAND_QUEUE_LENGTH, sizeof(SCARA_COMMAND_MESSAGE));
     if (commandQueue == NULL) {
+        return false;
+    }
+
+    commandResultQueue = xQueueCreate(SCARA_COMMAND_RESULT_QUEUE_LENGTH,
+                                      sizeof(SCARA_COMMAND_RESULT));
+    if (commandResultQueue == NULL) {
+        vQueueDelete(commandQueue);
+        commandQueue = NULL;
         return false;
     }
 
@@ -55,14 +67,16 @@ bool scaraCommandQueueInit(void)
                     SCARA_COMMAND_EXECUTOR_PRIORITY,
                     NULL) != pdPASS) {
         vQueueDelete(commandQueue);
+        vQueueDelete(commandResultQueue);
         commandQueue = NULL;
+        commandResultQueue = NULL;
         return false;
     }
 
     return true;
 }
 
-bool scaraCommandQueueSend(const char *command)
+bool scaraCommandQueueSend(const char *command, SCARA_COMMAND_SOURCE source)
 {
     if (commandQueue == NULL || command == NULL) {
         return false;
@@ -77,9 +91,19 @@ bool scaraCommandQueueSend(const char *command)
     }
 
     memcpy(message.text, command, commandLength + 1);
+    message.source = source;
 
     // Do not block an input task when all queue slots are already occupied.
     return xQueueSend(commandQueue, &message, 0) == pdPASS;
+}
+
+bool scaraCommandResultReceive(SCARA_COMMAND_RESULT *result)
+{
+    if (commandResultQueue == NULL || result == NULL) {
+        return false;
+    }
+
+    return xQueueReceive(commandResultQueue, result, 0) == pdPASS;
 }
 
 static void commandExecutorTask(void *arg)
@@ -92,7 +116,17 @@ static void commandExecutorTask(void *arg)
     while (1) {
         // Wait without consuming CPU until an input task submits a command.
         if (xQueueReceive(commandQueue, &message, portMAX_DELAY) == pdPASS) {
-            processScaraCommand(&console, message.text);
+            int commandSucceeded = processScaraCommand(&console, message.text);
+
+            if (message.source == SCARA_COMMAND_SOURCE_TCP) {
+                SCARA_COMMAND_RESULT result = commandSucceeded
+                    ? SCARA_COMMAND_RESULT_DONE
+                    : SCARA_COMMAND_RESULT_ERROR;
+
+                if (xQueueSend(commandResultQueue, &result, 0) != pdPASS) {
+                    printf("TCP command result discarded: result queue is full\n");
+                }
+            }
         }
     }
 }

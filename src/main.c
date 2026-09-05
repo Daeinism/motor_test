@@ -80,7 +80,7 @@ static void userInputTask(void *arg) // Create targetEncoderCount from user angl
             continue;
         }
 
-        if (!scaraCommandQueueSend(inputBuffer)) {
+        if (!scaraCommandQueueSend(inputBuffer, SCARA_COMMAND_SOURCE_USB)) {
             printf("Command rejected: queue is full or the command is too long\n");
         }
     }

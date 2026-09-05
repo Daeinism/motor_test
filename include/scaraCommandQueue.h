@@ -15,7 +15,18 @@
 
 #include <stdbool.h>
 
+typedef enum SCARA_COMMAND_SOURCE {
+    SCARA_COMMAND_SOURCE_USB,
+    SCARA_COMMAND_SOURCE_TCP
+} SCARA_COMMAND_SOURCE;
+
+typedef enum SCARA_COMMAND_RESULT {
+    SCARA_COMMAND_RESULT_DONE,
+    SCARA_COMMAND_RESULT_ERROR
+} SCARA_COMMAND_RESULT;
+
 bool scaraCommandQueueInit(void);
-bool scaraCommandQueueSend(const char *command);
+bool scaraCommandQueueSend(const char *command, SCARA_COMMAND_SOURCE source);
+bool scaraCommandResultReceive(SCARA_COMMAND_RESULT *result);
 
 #endif /* SCARA_COMMAND_QUEUE_H_ */
