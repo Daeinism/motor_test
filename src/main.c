@@ -30,6 +30,7 @@
 #include "scaraConsole.h"
 #include "scaraMotion.h"
 #include "statusLed.h"
+#include "tcpCommandServer.h"
 #include "voltageReader.h"
 #include "wifiManager.h"
 
@@ -53,6 +54,8 @@ void app_main(void)
 
     if (!wifiManagerInit()) {
         printf("Wi-Fi manager is unavailable\n");
+    } else if (!tcpCommandServerInit()) {
+        printf("TCP command server is unavailable\n");
     }
 
     if (!scaraCommandQueueInit()) {
