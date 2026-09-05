@@ -24,7 +24,7 @@
 #define L1                    142.0       // inner arm length
 #define L2                    130.0       // outer arm length
 #define MAX_ABS_THETA1_DEG    80.0        // max angle of inner arm
-#define MAX_ABS_THETA2_DEG    120.0       // max angle of outer arm relative to inner arm
+#define MAX_ABS_THETA2_DEG    150.0       // max angle of outer arm relative to inner arm
 
 /*|Function Declarations|------------------------------------------------------*/
 // Kinematics Functions

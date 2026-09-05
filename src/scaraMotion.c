@@ -6,7 +6,7 @@
 #include "encoder.h"
 #include "motor.h"
 
-#define MOTOR_MOVE_TIMEOUT_MS 5000 // 5 seconds
+#define MOTOR_MOVE_TIMEOUT_MS 3000 // 3 seconds
 
 static int32_t degreesToEncoderCount(float inputDegrees);
 

@@ -152,11 +152,11 @@ static void encoderPrintTask(void *arg) // Prints encoder value & Angle
 
         if ((currentLink1Count != previousLink1Count) ||
             (currentLink2Count != previousLink2Count)) {
-            printf("Link 1: %ld counts, %.2f degrees | Link 2: %ld counts, %.2f degrees\n",
+            printf("Link 1: %ld counts, %.2f degrees | Link 2: %ld counts, %.2f degrees relative to Link 1\n",
                    (long)currentLink1Count,
                    getAngleFromCount(currentLink1Count),
                    (long)currentLink2Count,
-                   getAngleFromCount(currentLink2Count));
+                   getAngleFromCount(currentLink2Count) - getAngleFromCount(currentLink1Count));
             previousLink1Count = currentLink1Count;
             previousLink2Count = currentLink2Count;
         }
